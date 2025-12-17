@@ -261,7 +261,7 @@ function App() {
                   value={jsonText}
                   onChange={(e) => setJsonText(e.currentTarget.value)}
                   rows={14}
-                  className="rounded-xl border-[var(--brand-light-green)]/35 bg-[var(--brand-dark-green)]/60 font-mono text-sm leading-6 text-[var(--text-primary)] shadow-[0_0_0_1px_rgba(82,201,125,0.08)]"
+                  className="rounded-xl border-[var(--brand-light-green)]/35 bg-[var(--wallet-card-grey)] font-mono text-sm leading-6 text-[var(--text-primary)] shadow-[0_0_0_1px_rgba(82,201,125,0.08)]"
                 />
               </div>
               {jsonSizing.ok ? (
