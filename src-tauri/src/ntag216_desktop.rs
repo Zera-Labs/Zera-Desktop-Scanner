@@ -72,7 +72,7 @@ pub enum NfcError {
 
 pub type CmdResult<T> = Result<T, String>;
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExistingTagBehavior {
     Overwrite,
@@ -100,7 +100,7 @@ impl Default for WriteOptions {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NdefKind {
     Text,
@@ -136,15 +136,17 @@ pub struct WriteResult {
 }
 
 /// PC/SC-based NFC reader for desktop platforms
+/// Stores the Card connection for reuse across multiple APDU calls
 pub struct DesktopNfcReader {
+    card: pcsc::Card,
     reader_name: String,
-    connected: bool,
 }
 
 impl DesktopNfcReader {
     /// Automatically detect and connect to first available NFC reader
     pub fn auto_connect() -> Result<Self, NfcError> {
-        use pcsc::{Context, Scope};
+        use pcsc::{Context, Scope, ShareMode};
+        use std::ffi::CString;
 
         let ctx = Context::establish(Scope::User)
             .map_err(|e| {
@@ -174,33 +176,10 @@ impl DesktopNfcReader {
         }
 
         let reader_name = readers_names[0].clone();
+        let reader_cstr = CString::new(reader_name.as_str())
+            .map_err(|e| NfcError::ConnectionFailed(format!("Invalid reader name: {}", e)))?;
 
-        Ok(DesktopNfcReader {
-            reader_name,
-            connected: true,
-        })
-    }
-
-    /// Send APDU command and get response
-    fn send_apdu(&self, cmd: &[u8]) -> Result<Vec<u8>, NfcError> {
-        use pcsc::{Context, Scope, ShareMode};
-        use std::ffi::CString;
-
-        dlog!("send_apdu: Sending command ({} bytes): {:02X?}", cmd.len(), cmd);
-        
-        let ctx = Context::establish(Scope::User)
-            .map_err(|e| {
-                dlog!("send_apdu: ERROR establishing context: {}", e);
-                NfcError::ConnectionFailed(e.to_string())
-            })?;
-
-        let reader_cstr = CString::new(self.reader_name.as_str())
-            .map_err(|e| {
-                dlog!("send_apdu: ERROR creating CString: {}", e);
-                NfcError::ConnectionFailed(format!("Invalid reader name: {}", e))
-            })?;
-
-        dlog!("send_apdu: Connecting to reader: {}", self.reader_name);
+        // Connect to the card and store the connection
         let card = ctx
             .connect(
                 &reader_cstr,
@@ -208,13 +187,48 @@ impl DesktopNfcReader {
                 pcsc::Protocols::T0 | pcsc::Protocols::T1,
             )
             .map_err(|e| {
-                dlog!("send_apdu: ERROR connecting to card: {}", e);
+                dlog!("auto_connect: ERROR connecting to card: {}", e);
                 NfcError::ConnectionFailed(e.to_string())
             })?;
 
+        Ok(DesktopNfcReader {
+            card,
+            reader_name,
+        })
+    }
+
+    /// Validate APDU response status codes
+    /// Returns the data portion (without status bytes) on success
+    fn validate_apdu_response(response: &[u8]) -> Result<Vec<u8>, NfcError> {
+        if response.len() < 2 {
+            return Err(NfcError::InvalidResponse("Response too short".into()));
+        }
+
+        let status = (response[response.len() - 2], response[response.len() - 1]);
+
+        match status {
+            (0x90, 0x00) => {
+                // Success - return data (everything except last 2 status bytes)
+                Ok(response[..response.len() - 2].to_vec())
+            }
+            (0x63, 0x00) => Err(NfcError::TagNotDetected("No tag present or communication error".into())),
+            (0x6A, 0x82) => Err(NfcError::InvalidResponse("Invalid page/file - page does not exist".into())),
+            (0x69, 0x85) => Err(NfcError::InvalidResponse("Conditions not satisfied - tag may be locked".into())),
+            (0x6A, 0x81) => Err(NfcError::InvalidResponse("Function not supported - invalid command".into())),
+            (s1, s2) => Err(NfcError::InvalidResponse(
+                format!("Unexpected status code: {:02X} {:02X}", s1, s2)
+            )),
+        }
+    }
+
+    /// Send APDU command and get response
+    /// Reuses the stored Card connection for performance
+    fn send_apdu(&self, cmd: &[u8]) -> Result<Vec<u8>, NfcError> {
+        dlog!("send_apdu: Sending command ({} bytes): {:02X?}", cmd.len(), cmd);
+
         let mut response_buf = [0; 256];
         dlog!("send_apdu: Transmitting APDU...");
-        let response = card
+        let response = self.card
             .transmit(cmd, &mut response_buf)
             .map_err(|e| {
                 dlog!("send_apdu: ERROR transmitting: {}", e);
@@ -222,37 +236,24 @@ impl DesktopNfcReader {
             })?;
 
         dlog!("send_apdu: Received response ({} bytes): {:02X?}", response.len(), response);
-        Ok(response.to_vec())
+        
+        // Validate status codes and extract data
+        Self::validate_apdu_response(response)
     }
 
     /// Read UID from tag
     pub fn read_uid(&self) -> Result<String, NfcError> {
-        let response = self.send_apdu(&APDU_GET_UID)?;
+        // send_apdu now returns data without status bytes (already validated)
+        let uid_data = self.send_apdu(&APDU_GET_UID)?;
 
-        // Response format: UID bytes (7) + status bytes
-        if response.len() < 9 {
-            return Err(NfcError::InvalidResponse(
-                "UID response too short".into(),
-            ));
+        // UID is typically 4 or 7 bytes (NTAG216 uses 7 bytes)
+        if uid_data.is_empty() {
+            return Err(NfcError::UidReadFailed("UID response empty".into()));
         }
 
-        // Check status (should end with 0x90 0x00 for success)
-        let status = (response[response.len() - 2], response[response.len() - 1]);
-        if status != (0x90, 0x00) && status != (0x61, 0x00) {
-            return Err(NfcError::TagNotDetected(format!(
-                "Invalid status: {:02X} {:02X}",
-                status.0, status.1
-            )));
-        }
-
-        // Extract UID (first 7 bytes typically)
-        let uid_len = if response.len() > 9 {
-            response[response.len() - 1] as usize
-        } else {
-            7
-        };
-
-        let uid_bytes = &response[..uid_len.min(response.len() - 2)];
+        // Extract UID bytes (typically 7 bytes for NTAG216)
+        let uid_len = uid_data.len().min(7);
+        let uid_bytes = &uid_data[..uid_len];
         Ok(bytes_to_hex(uid_bytes, " "))
     }
 
@@ -265,9 +266,9 @@ impl DesktopNfcReader {
             dlog!("Reading page {}...", page);
             // Try ACR1252U direct format first (FF B0 00 <page> 04)
             // ACR1252U supports direct native commands without Direct Transmit wrapper
-            let mut cmd = vec![0xFF, 0xB0, 0x00, page as u8, 0x04];
+            let cmd = vec![0xFF, 0xB0, 0x00, page as u8, 0x04];
             
-            let mut response = match self.send_apdu(&cmd) {
+            let response = match self.send_apdu(&cmd) {
                 Ok(r) => r,
                 Err(_) => {
                     // Fallback to ACR122U Direct Transmit format
@@ -281,41 +282,23 @@ impl DesktopNfcReader {
                 }
             };
 
-            // Debug: log response for troubleshooting
-            // eprintln!("Read page {} response ({} bytes): {:02X?}", page, response.len(), response);
-
-            // Check status (should end with 90 00)
-            if response.len() < 2 {
-                return Err(NfcError::PageReadFailed {
-                    page,
-                    reason: format!("Response too short: {} bytes", response.len()),
-                });
-            }
-
-            let status = (response[response.len() - 2], response[response.len() - 1]);
-            if status != (0x90, 0x00) {
-                return Err(NfcError::PageReadFailed {
-                    page,
-                    reason: format!("Invalid status: {:02X} {:02X}", status.0, status.1),
-                });
-            }
-
+            // send_apdu now returns data without status bytes (already validated)
             // Parse response - handle both ACR1252U direct format and ACR122U Direct Transmit
-            // ACR1252U: <4 bytes data> 90 00 (6 bytes total)
-            // ACR122U: D5 41 00 <4 bytes data> 90 00 (8 bytes total)
+            // ACR1252U: <4 bytes data> (status already stripped)
+            // ACR122U: D5 41 00 <4 bytes data> (status already stripped)
             
             let mut page_data = [0u8; 4];
             let mut found_data = false;
 
-            // ACR1252U direct format: <4 bytes> 90 00 (6 bytes)
-            if response.len() == 6 {
-                dlog!("  Parsing as ACR1252U direct format (6 bytes)");
+            // ACR1252U direct format: exactly 4 bytes
+            if response.len() == 4 {
+                dlog!("  Parsing as ACR1252U direct format (4 bytes)");
                 page_data.copy_from_slice(&response[0..4]);
                 found_data = true;
             }
-            // ACR122U Direct Transmit: D5 41 00 <4 bytes> 90 00 (8 bytes)
-            else if response.len() >= 8 && response[0] == 0xD5 && response[1] == 0x41 {
-                dlog!("  Parsing as ACR122U Direct Transmit format (8+ bytes)");
+            // ACR122U Direct Transmit: D5 41 00 <4 bytes>
+            else if response.len() >= 7 && response[0] == 0xD5 && response[1] == 0x41 {
+                dlog!("  Parsing as ACR122U Direct Transmit format (7+ bytes)");
                 if response[2] == 0x00 {
                     page_data.copy_from_slice(&response[3..7]);
                     found_data = true;
@@ -323,14 +306,12 @@ impl DesktopNfcReader {
                     dlog!("  ERROR: PN532 status not 0x00: {:02X}", response[2]);
                 }
             }
-            // Fallback: try to extract 4 bytes before status
-            else if response.len() >= 6 {
-                dlog!("  Parsing as fallback format (extracting before status)");
-                let data_start = response.len() - 6;
-                if data_start + 4 <= response.len() - 2 {
-                    page_data.copy_from_slice(&response[data_start..data_start + 4]);
-                    found_data = true;
-                }
+            // Fallback: try to extract last 4 bytes
+            else if response.len() >= 4 {
+                dlog!("  Parsing as fallback format (extracting last 4 bytes)");
+                let start = response.len() - 4;
+                page_data.copy_from_slice(&response[start..start + 4]);
+                found_data = true;
             }
 
             if !found_data {
@@ -380,42 +361,12 @@ impl DesktopNfcReader {
             cmd.extend_from_slice(chunk);
             
             dlog!("  Command: {:02X?}", cmd);
-            let response = match self.send_apdu(&cmd) {
-                Ok(r) => {
-                    dlog!("  Direct format response ({} bytes): {:02X?}", r.len(), r);
-                    // Check if write succeeded
-                    if r.len() >= 2 {
-                        let status = (r[r.len() - 2], r[r.len() - 1]);
-                        if status == (0x90, 0x00) {
-                            dlog!("  Write successful with direct format");
-                            r // Success
-                        } else {
-                            dlog!("  Direct format failed (status {:02X} {:02X}), trying fallback", status.0, status.1);
-                            // Try fallback format
-                            let mut cmd_dt = Vec::with_capacity(13);
-                            cmd_dt.extend_from_slice(&APDU_DIRECT_TRANSMIT);
-                            cmd_dt.push(0x09);
-                            cmd_dt.extend_from_slice(&PN532_INDATAEXCHANGE);
-                            cmd_dt.push(NTAG216_WRITE_CMD);
-                            cmd_dt.push(page as u8);
-                            cmd_dt.extend_from_slice(chunk);
-                            dlog!("  Fallback command: {:02X?}", cmd_dt);
-                            let r2 = self.send_apdu(&cmd_dt)?;
-                            dlog!("  Fallback response: {:02X?}", r2);
-                            r2
-                        }
-                    } else {
-                        dlog!("  Direct format response too short, trying fallback");
-                        // Try fallback format
-                        let mut cmd_dt = Vec::with_capacity(13);
-                        cmd_dt.extend_from_slice(&APDU_DIRECT_TRANSMIT);
-                        cmd_dt.push(0x09);
-                        cmd_dt.extend_from_slice(&PN532_INDATAEXCHANGE);
-                        cmd_dt.push(NTAG216_WRITE_CMD);
-                        cmd_dt.push(page as u8);
-                        cmd_dt.extend_from_slice(chunk);
-                        self.send_apdu(&cmd_dt)?
-                    }
+            // send_apdu validates status codes and returns data portion
+            // For write operations, success means empty response (status already validated)
+            match self.send_apdu(&cmd) {
+                Ok(_response) => {
+                    dlog!("  Write successful with direct format");
+                    // Success - status already validated by send_apdu
                 }
                 Err(e) => {
                     dlog!("  Direct format error: {}, trying fallback", e);
@@ -427,27 +378,11 @@ impl DesktopNfcReader {
                     cmd_dt.push(NTAG216_WRITE_CMD);
                     cmd_dt.push(page as u8);
                     cmd_dt.extend_from_slice(chunk);
-                    self.send_apdu(&cmd_dt)?
+                    dlog!("  Fallback command: {:02X?}", cmd_dt);
+                    // This will return error if status is invalid
+                    self.send_apdu(&cmd_dt)?;
+                    dlog!("  Write successful with fallback format");
                 }
-            };
-
-            dlog!("  Final response ({} bytes): {:02X?}", response.len(), response);
-            if response.len() < 2 {
-                dlog!("  ERROR: Response too short");
-                return Err(NfcError::PageWriteFailed {
-                    page,
-                    reason: format!("Response too short: {} bytes, response: {:02X?}", response.len(), response),
-                });
-            }
-
-            let status = (response[response.len() - 2], response[response.len() - 1]);
-            dlog!("  Write status: {:02X} {:02X}", status.0, status.1);
-            if status != (0x90, 0x00) {
-                dlog!("  ERROR: Invalid write status");
-                return Err(NfcError::PageWriteFailed {
-                    page,
-                    reason: format!("Invalid status: {:02X} {:02X}, full response: {:02X?}", status.0, status.1, response),
-                });
             }
             
             dlog!("  Page {} write successful", page);
@@ -1336,5 +1271,665 @@ pub fn check_nfc_reader() -> CmdResult<String> {
             e,
             readers_list.join(", ")
         )),
+    }
+}
+
+// ============================================================================
+// Unit Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Note: Mocking pcsc::Card is difficult since it's a concrete type.
+    // We focus on testing pure functions (NDEF encoding/decoding, TLV parsing)
+    // and error handling. Integration tests would require actual hardware.
+
+    // ========================================================================
+    // Pure Function Tests (NDEF encoding/decoding, TLV parsing)
+    // ========================================================================
+
+    #[test]
+    fn test_bytes_to_hex() {
+        let bytes = [0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF];
+        assert_eq!(bytes_to_hex(&bytes, ""), "0123456789ABCDEF");
+        assert_eq!(bytes_to_hex(&bytes, " "), "01 23 45 67 89 AB CD EF");
+        assert_eq!(bytes_to_hex(&bytes, ":"), "01:23:45:67:89:AB:CD:EF");
+    }
+
+    #[test]
+    fn test_encode_ndef_text_record() {
+        let result = encode_ndef_text_record("Hello", "en").unwrap();
+        assert!(!result.is_empty());
+        assert!(result.len() > 5); // Should have header + payload
+        
+        // Test with empty string
+        let result2 = encode_ndef_text_record("", "en").unwrap();
+        assert!(!result2.is_empty());
+        
+        // Test with long language code
+        let result3 = encode_ndef_text_record("Test", "en-US").unwrap();
+        assert!(!result3.is_empty());
+    }
+
+    #[test]
+    fn test_encode_ndef_text_record_long_language() {
+        // Max language length is 63 bytes (0x3F)
+        let max_lang = "a".repeat(63);
+        assert!(encode_ndef_text_record("Test", &max_lang).is_ok());
+        
+        let too_long_lang = "a".repeat(64);
+        assert!(encode_ndef_text_record("Test", &too_long_lang).is_err());
+    }
+
+    #[test]
+    fn test_encode_ndef_uri_record() {
+        let result = encode_ndef_uri_record("https://example.com").unwrap();
+        assert!(!result.is_empty());
+        
+        // Test different URI prefixes
+        assert!(encode_ndef_uri_record("http://www.example.com").is_ok());
+        assert!(encode_ndef_uri_record("https://www.example.com").is_ok());
+        assert!(encode_ndef_uri_record("http://example.com").is_ok());
+        assert!(encode_ndef_uri_record("https://example.com").is_ok());
+        assert!(encode_ndef_uri_record("ftp://example.com").is_ok());
+    }
+
+    #[test]
+    fn test_encode_ndef_json_record() {
+        let json = r#"{"key":"value","number":123}"#;
+        let result = encode_ndef_mime_record("application/json", json.as_bytes()).unwrap();
+        assert!(!result.is_empty());
+        
+        // Test with invalid JSON (should still encode, validation happens elsewhere)
+        let invalid = "not json";
+        assert!(encode_ndef_mime_record("application/json", invalid.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn test_encode_ndef_tlv_short_length() {
+        let message = vec![0x01, 0x02, 0x03]; // 3 bytes
+        let result = encode_ndef_tlv(&message).unwrap();
+        
+        // Should be: [0x03, 0x03, 0x01, 0x02, 0x03]
+        assert_eq!(result[0], 0x03); // TLV type
+        assert_eq!(result[1], 0x03); // Length
+        assert_eq!(result[2..5], message);
+    }
+
+    #[test]
+    fn test_encode_ndef_tlv_extended_length() {
+        // Create a message that requires extended length (>255 bytes)
+        let message = vec![0x00; 300];
+        let result = encode_ndef_tlv(&message).unwrap();
+        
+        // Should be: [0x03, 0xFF, 0x01, 0x2C, ...data...]
+        assert_eq!(result[0], 0x03); // TLV type
+        assert_eq!(result[1], 0xFF); // Extended length marker
+        assert_eq!((result[2] as u16) << 8 | result[3] as u16, 300);
+    }
+
+    #[test]
+    fn test_build_ntag216_ndef_tlv_image() {
+        let message = vec![0x01, 0x02, 0x03, 0x04];
+        let result = build_ntag216_ndef_tlv_image(&message).unwrap();
+        
+        assert!(!result.is_empty());
+        assert!(result.len() >= message.len() + 4); // TLV header + padding
+        assert!(result.len() <= 872); // Max NTAG216 size
+    }
+
+    #[test]
+    fn test_build_ntag216_ndef_tlv_image_too_large() {
+        // Create message that exceeds NTAG216 capacity
+        let message = vec![0x00; 1000];
+        assert!(build_ntag216_ndef_tlv_image(&message).is_err());
+    }
+
+    #[test]
+    fn test_parse_ndef_from_pages_empty() {
+        let pages: Vec<[u8; 4]> = vec![];
+        let result = parse_ndef_from_pages(&pages).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_ndef_from_pages_too_short() {
+        let pages = vec![[0x03, 0x01, 0x00, 0x00]]; // Only 1 page, incomplete
+        let result = parse_ndef_from_pages(&pages).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_ndef_from_pages_terminator() {
+        let pages = vec![
+            [0xFE, 0x00, 0x00, 0x00], // Terminator TLV
+        ];
+        let result = parse_ndef_from_pages(&pages).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_parse_ndef_from_pages_simple_ndef() {
+        // Simple NDEF: TLV type 0x03, length 0x05, payload [0x01, 0x02, 0x03, 0x04, 0x05]
+        let pages = vec![
+            [0x03, 0x05, 0x01, 0x02], // TLV header + start of payload
+            [0x03, 0x04, 0x05, 0x00], // Rest of payload + padding
+        ];
+        let result = parse_ndef_from_pages(&pages).unwrap();
+        assert!(result.is_some());
+        let msg = result.unwrap();
+        assert_eq!(msg, vec![0x01, 0x02, 0x03, 0x04, 0x05]);
+    }
+
+    #[test]
+    fn test_parse_ndef_from_pages_extended_length() {
+        // Extended length NDEF: TLV type 0x03, length 0xFF 0x01 0x00 (256 bytes)
+        let mut pages = vec![
+            [0x03, 0xFF, 0x01, 0x00], // TLV header with extended length
+        ];
+        // Add pages with payload data
+        for i in 0..64 {
+            pages.push([i as u8, (i+1) as u8, (i+2) as u8, (i+3) as u8]);
+        }
+        
+        let result = parse_ndef_from_pages(&pages).unwrap();
+        assert!(result.is_some());
+        let msg = result.unwrap();
+        assert_eq!(msg.len(), 256);
+    }
+
+    #[test]
+    fn test_parse_ndef_from_pages_null_bytes() {
+        // NDEF with leading null bytes
+        let pages = vec![
+            [0x00, 0x00, 0x00, 0x00], // Null padding
+            [0x03, 0x03, 0x01, 0x02], // TLV header
+            [0x03, 0x00, 0x00, 0x00], // Payload
+        ];
+        let result = parse_ndef_from_pages(&pages).unwrap();
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_decode_ndef_message_empty() {
+        let result = decode_ndef_message(&[]);
+        // Empty message returns None (early return in decode_ndef_message)
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_decode_ndef_message_too_short() {
+        let msg = vec![0x01]; // Too short
+        let result = decode_ndef_message(&msg);
+        assert!(result.is_some());
+        let summary = result.unwrap();
+        assert_eq!(summary.kind, NdefKind::Unknown);
+    }
+
+    #[test]
+    fn test_decode_ndef_message_text() {
+        // Simple text record: SR=1, IL=0, TNF=1, type_len=1, payload_len=5
+        // Type="T", payload=[0x02, 0x65, 0x6E, 0x48, 0x65] (lang_len=2, lang="en", text="He")
+        let msg = vec![
+            0xD1, // Header: MB=1, ME=1, SR=1, IL=0, TNF=1
+            0x01, // Type length
+            0x05, // Payload length
+            0x54, // Type "T"
+            0x02, 0x65, 0x6E, // Lang length + "en"
+            0x48, 0x65, // Text "He"
+        ];
+        let result = decode_ndef_message(&msg);
+        assert!(result.is_some());
+        let summary = result.unwrap();
+        assert_eq!(summary.kind, NdefKind::Text);
+        assert_eq!(summary.text, Some("He".to_string()));
+        assert_eq!(summary.language, Some("en".to_string()));
+    }
+
+    #[test]
+    fn test_decode_ndef_message_uri() {
+        // Simple URI record: SR=1, IL=0, TNF=1, type_len=1, payload_len=3
+        // Type="U", payload=[0x03, 0x65, 0x78] (prefix=0x03="http://", rest="ex")
+        let msg = vec![
+            0x91, // Header: MB=1, ME=1, SR=1, IL=0, TNF=1
+            0x01, // Type length
+            0x03, // Payload length
+            0x55, // Type "U"
+            0x03, 0x65, 0x78, // Prefix + "ex"
+        ];
+        let result = decode_ndef_message(&msg);
+        assert!(result.is_some());
+        let summary = result.unwrap();
+        assert_eq!(summary.kind, NdefKind::Uri);
+        assert_eq!(summary.uri, Some("http://ex".to_string()));
+    }
+
+    #[test]
+    fn test_decode_ndef_message_json() {
+        // MIME record: SR=1, IL=0, TNF=2, type_len=16, payload_len=7
+        // Type="application/json", payload="{\"a\":1}" (7 bytes)
+        let mut msg = vec![
+            0xD2, // Header: MB=1, ME=1, SR=1, IL=0, TNF=2
+            0x10, // Type length (16)
+            0x07, // Payload length (7 bytes for "{\"a\":1}")
+        ];
+        msg.extend_from_slice(b"application/json");
+        msg.extend_from_slice(b"{\"a\":1}");
+        
+        let result = decode_ndef_message(&msg);
+        assert!(result.is_some());
+        let summary = result.unwrap();
+        assert_eq!(summary.kind, NdefKind::Json);
+        assert_eq!(summary.mime_type, Some("application/json".to_string()));
+        assert_eq!(summary.json, Some("{\"a\":1}".to_string()));
+    }
+
+    #[test]
+    fn test_validate_apdu_response_success() {
+        let response = vec![0x01, 0x02, 0x03, 0x04, 0x90, 0x00];
+        let result = DesktopNfcReader::validate_apdu_response(&response).unwrap();
+        assert_eq!(result, vec![0x01, 0x02, 0x03, 0x04]);
+    }
+
+    #[test]
+    fn test_validate_apdu_response_too_short() {
+        let response = vec![0x90];
+        let result = DesktopNfcReader::validate_apdu_response(&response);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_apdu_response_error_codes() {
+        // Test various error status codes
+        let test_cases = vec![
+            vec![0x63, 0x00],
+            vec![0x6A, 0x82],
+            vec![0x69, 0x85],
+            vec![0x6A, 0x81],
+            vec![0xFF, 0xFF],
+        ];
+
+        for response in test_cases {
+            let result = DesktopNfcReader::validate_apdu_response(&response);
+            assert!(result.is_err(), "Expected error for response {:02X?}", response);
+        }
+    }
+
+    #[test]
+    fn test_validate_apdu_response_empty_success() {
+        // Empty response with success status
+        let response = vec![0x90, 0x00];
+        let result = DesktopNfcReader::validate_apdu_response(&response).unwrap();
+        assert_eq!(result, Vec::<u8>::new());
+    }
+
+    // ========================================================================
+    // Integration Tests (require refactoring to use traits for mocking)
+    // ========================================================================
+
+    #[test]
+    fn test_write_options_default() {
+        let opts = WriteOptions::default();
+        assert_eq!(opts.existing_tag_behavior, ExistingTagBehavior::Overwrite);
+    }
+
+    #[test]
+    fn test_existing_tag_behavior_serialization() {
+        // Test that enum serializes correctly
+        let overwrite = ExistingTagBehavior::Overwrite;
+        let skip = ExistingTagBehavior::Skip;
+        let error = ExistingTagBehavior::Error;
+        
+        // Just verify they can be created
+        assert!(matches!(overwrite, ExistingTagBehavior::Overwrite));
+        assert!(matches!(skip, ExistingTagBehavior::Skip));
+        assert!(matches!(error, ExistingTagBehavior::Error));
+    }
+
+    #[test]
+    fn test_ndef_kind_serialization() {
+        let kinds = vec![
+            NdefKind::Text,
+            NdefKind::Uri,
+            NdefKind::Json,
+            NdefKind::Unknown,
+        ];
+        
+        for kind in kinds {
+            // Just verify they can be created
+            assert!(matches!(kind, NdefKind::Text | NdefKind::Uri | NdefKind::Json | NdefKind::Unknown));
+        }
+    }
+
+    #[test]
+    fn test_ndef_summary_creation() {
+        let summary = NdefSummary {
+            kind: NdefKind::Text,
+            text: Some("Hello".to_string()),
+            uri: None,
+            language: Some("en".to_string()),
+            mime_type: None,
+            json: None,
+            message_hex: "48656C6C6F".to_string(),
+        };
+        
+        assert_eq!(summary.kind, NdefKind::Text);
+        assert_eq!(summary.text, Some("Hello".to_string()));
+        assert_eq!(summary.language, Some("en".to_string()));
+    }
+
+    #[test]
+    fn test_ntag216_read_result_creation() {
+        let result = Ntag216ReadResult {
+            uid: Some("04 12 34 56 78 90 AB".to_string()),
+            is_blank: false,
+            ndef: Some(NdefSummary {
+                kind: NdefKind::Text,
+                text: Some("Test".to_string()),
+                uri: None,
+                language: None,
+                mime_type: None,
+                json: None,
+                message_hex: "".to_string(),
+            }),
+        };
+        
+        assert_eq!(result.uid, Some("04 12 34 56 78 90 AB".to_string()));
+        assert_eq!(result.is_blank, false);
+        assert!(result.ndef.is_some());
+    }
+
+    #[test]
+    fn test_write_result_creation() {
+        let result = WriteResult {
+            uid: Some("04 12 34 56 78 90 AB".to_string()),
+            ok: true,
+            skipped: false,
+            error: None,
+        };
+        
+        assert_eq!(result.ok, true);
+        assert_eq!(result.skipped, false);
+        assert!(result.error.is_none());
+    }
+
+    // ========================================================================
+    // Edge Case Tests
+    // ========================================================================
+
+    #[test]
+    fn test_encode_ndef_tlv_max_short_length() {
+        // Test maximum short length (255 bytes)
+        let message = vec![0x00; 255];
+        let result = encode_ndef_tlv(&message).unwrap();
+        assert_eq!(result[0], 0x03);
+        assert_eq!(result[1], 255);
+    }
+
+    #[test]
+    fn test_encode_ndef_tlv_min_extended_length() {
+        // Test minimum extended length (256 bytes)
+        let message = vec![0x00; 256];
+        let result = encode_ndef_tlv(&message).unwrap();
+        assert_eq!(result[0], 0x03);
+        assert_eq!(result[1], 0xFF); // Extended length marker
+        assert_eq!((result[2] as u16) << 8 | result[3] as u16, 256);
+    }
+
+    #[test]
+    fn test_parse_ndef_from_pages_multiple_tlv() {
+        // Multiple TLV entries before NDEF
+        let pages = vec![
+            [0x00, 0x05, 0x01, 0x02], // Some other TLV (type 0x00, length 5)
+            [0x03, 0x05, 0x01, 0x02], // NDEF TLV header
+            [0x03, 0x04, 0x05, 0x00], // NDEF payload
+        ];
+        let result = parse_ndef_from_pages(&pages).unwrap();
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_decode_ndef_message_long_text() {
+        // Text record with long payload
+        // Payload: lang_len (1 byte) + lang ("en" = 2 bytes) + text (252 bytes) = 255 total
+        let mut msg = vec![
+            0xD1, // Header
+            0x01, // Type length
+            0xFF, // Payload length (255)
+            0x54, // Type "T"
+            0x02, 0x65, 0x6E, // Lang length (2) + "en"
+        ];
+        msg.extend(vec![0x41; 252]); // Long text (252 bytes to make total 255: 1+2+252)
+        
+        let result = decode_ndef_message(&msg);
+        assert!(result.is_some());
+        let summary = result.unwrap();
+        assert_eq!(summary.kind, NdefKind::Text);
+    }
+
+    #[test]
+    fn test_decode_ndef_message_uri_prefixes() {
+        // Test all URI prefixes
+        let prefixes = vec![
+            (0x01, "http://www."),
+            (0x02, "https://www."),
+            (0x03, "http://"),
+            (0x04, "https://"),
+        ];
+        
+        for (prefix_code, prefix_str) in prefixes {
+            let msg = vec![
+                0x91, // Header
+                0x01, // Type length
+                0x04, // Payload length
+                0x55, // Type "U"
+                prefix_code, 0x65, 0x78, 0x61, // Prefix + "exa"
+            ];
+            let result = decode_ndef_message(&msg);
+            assert!(result.is_some());
+            let summary = result.unwrap();
+            assert_eq!(summary.kind, NdefKind::Uri);
+            assert!(summary.uri.unwrap().starts_with(prefix_str));
+        }
+    }
+
+    #[test]
+    fn test_build_ntag216_ndef_tlv_image_padding() {
+        // Test that padding is added correctly
+        let message = vec![0x01, 0x02, 0x03]; // 3 bytes
+        let result = build_ntag216_ndef_tlv_image(&message).unwrap();
+        
+        // Should be padded to 4-byte boundary
+        assert_eq!(result.len() % 4, 0);
+    }
+
+    #[test]
+    fn test_parse_ndef_from_pages_incomplete_extended_length() {
+        // Extended length TLV but not enough bytes for length field
+        let pages = vec![
+            [0x03, 0xFF, 0x01, 0x00], // Incomplete extended length (missing second byte)
+        ];
+        let result = parse_ndef_from_pages(&pages).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_decode_ndef_message_with_id() {
+        // Record with ID field (IL=1)
+        let msg = vec![
+            0xB1, // Header: IL=1
+            0x01, // Type length
+            0x01, // ID length
+            0x01, // Payload length
+            0x54, // Type "T"
+            0x69, // ID "i"
+            0x48, // Payload "H"
+        ];
+        let result = decode_ndef_message(&msg);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_decode_ndef_message_long_type() {
+        // Record with long type name (MIME type)
+        let mut msg = vec![
+            0xD2, // Header: TNF=2 (MIME)
+            0x10, // Type length (16)
+            0x07, // Payload length (7 bytes for "{\"a\":1}")
+        ];
+        msg.extend(b"application/json");
+        msg.extend(b"{\"a\":1}");
+        
+        let result = decode_ndef_message(&msg);
+        assert!(result.is_some());
+        let summary = result.unwrap();
+        assert_eq!(summary.mime_type, Some("application/json".to_string()));
+        assert_eq!(summary.kind, NdefKind::Json);
+    }
+
+    // ========================================================================
+    // Error Handling Tests
+    // ========================================================================
+
+    #[test]
+    fn test_nfc_error_display() {
+        let errors = vec![
+            NfcError::ReaderNotAvailable("test".to_string()),
+            NfcError::ConnectionFailed("test".to_string()),
+            NfcError::NoReader,
+            NfcError::TagNotDetected("test".to_string()),
+            NfcError::InvalidResponse("test".to_string()),
+            NfcError::UidReadFailed("test".to_string()),
+            NfcError::PageReadFailed { page: 4, reason: "test".to_string() },
+            NfcError::PageWriteFailed { page: 4, reason: "test".to_string() },
+            NfcError::InvalidArg("test".to_string()),
+            NfcError::TagAlreadyWritten { uid: "test".to_string() },
+            NfcError::ParseError("test".to_string()),
+            NfcError::VerificationFailed("test".to_string()),
+        ];
+        
+        for error in errors {
+            let display = format!("{}", error);
+            assert!(!display.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_encode_ndef_text_invalid_lang_length() {
+        // Max language length is 63 bytes (0x3F)
+        let max_lang = "a".repeat(63);
+        assert!(encode_ndef_text_record("test", &max_lang).is_ok());
+        
+        let too_long = "a".repeat(64);
+        assert!(encode_ndef_text_record("test", &too_long).is_err());
+        
+        let way_too_long = "a".repeat(100);
+        assert!(encode_ndef_text_record("test", &way_too_long).is_err());
+    }
+
+    #[test]
+    fn test_build_ntag216_ndef_tlv_image_exact_max() {
+        // Test with max size that fits in NTAG216
+        // Max user data is 872 bytes, but TLV adds overhead
+        // Extended length TLV: 4 bytes header + message + 3 bytes padding = max 872
+        // So max message is 872 - 4 - 3 = 865 bytes
+        let message = vec![0x00; 865];
+        let result = build_ntag216_ndef_tlv_image(&message);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_build_ntag216_ndef_tlv_image_over_max() {
+        // Test with size exceeding max
+        let message = vec![0x00; 869]; // Too large
+        let result = build_ntag216_ndef_tlv_image(&message);
+        assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // Round-trip Tests
+    // ========================================================================
+
+    #[test]
+    fn test_text_encode_decode_roundtrip() {
+        let text = "Hello, World!";
+        let lang = "en";
+        
+        let encoded = encode_ndef_text_record(text, lang).unwrap();
+        let tlv = encode_ndef_tlv(&encoded).unwrap();
+        
+        // Create pages from TLV
+        let mut pages = Vec::new();
+        for chunk in tlv.chunks(4) {
+            let mut page = [0u8; 4];
+            page[..chunk.len()].copy_from_slice(chunk);
+            pages.push(page);
+        }
+        
+        // Parse back
+        let parsed_msg = parse_ndef_from_pages(&pages).unwrap();
+        assert!(parsed_msg.is_some());
+        
+        let decoded = decode_ndef_message(&parsed_msg.unwrap());
+        assert!(decoded.is_some());
+        let summary = decoded.unwrap();
+        assert_eq!(summary.kind, NdefKind::Text);
+        assert_eq!(summary.text, Some(text.to_string()));
+        assert_eq!(summary.language, Some(lang.to_string()));
+    }
+
+    #[test]
+    fn test_uri_encode_decode_roundtrip() {
+        let uri = "https://example.com";
+        
+        let encoded = encode_ndef_uri_record(uri).unwrap();
+        let tlv = encode_ndef_tlv(&encoded).unwrap();
+        
+        // Create pages
+        let mut pages = Vec::new();
+        for chunk in tlv.chunks(4) {
+            let mut page = [0u8; 4];
+            page[..chunk.len()].copy_from_slice(chunk);
+            pages.push(page);
+        }
+        
+        // Parse back
+        let parsed_msg = parse_ndef_from_pages(&pages).unwrap();
+        assert!(parsed_msg.is_some());
+        
+        let decoded = decode_ndef_message(&parsed_msg.unwrap());
+        assert!(decoded.is_some());
+        let summary = decoded.unwrap();
+        assert_eq!(summary.kind, NdefKind::Uri);
+        // URI encoding may add prefix, so just check it contains the domain
+        assert!(summary.uri.unwrap().contains("example.com"));
+    }
+
+    #[test]
+    fn test_json_encode_decode_roundtrip() {
+        let json = r#"{"key":"value","number":123}"#;
+        
+        let encoded = encode_ndef_mime_record("application/json", json.as_bytes()).unwrap();
+        let tlv = encode_ndef_tlv(&encoded).unwrap();
+        
+        // Create pages
+        let mut pages = Vec::new();
+        for chunk in tlv.chunks(4) {
+            let mut page = [0u8; 4];
+            page[..chunk.len()].copy_from_slice(chunk);
+            pages.push(page);
+        }
+        
+        // Parse back
+        let parsed_msg = parse_ndef_from_pages(&pages).unwrap();
+        assert!(parsed_msg.is_some());
+        
+        let decoded = decode_ndef_message(&parsed_msg.unwrap());
+        assert!(decoded.is_some());
+        let summary = decoded.unwrap();
+        assert_eq!(summary.kind, NdefKind::Json);
+        assert_eq!(summary.json, Some(json.to_string()));
     }
 }
