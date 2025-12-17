@@ -1,22 +1,56 @@
-import * as React from "react";
+import * as React from "react"
+import {  cva } from "class-variance-authority"
+import type {VariantProps} from "class-variance-authority";
 
-import { cn } from "@/lib/utils";
+import { cn } from "@/lib/utils"
 
-const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
-  ({ className, type, ...props }, ref) => (
+const inputVariants = cva(
+  [
+    // Base visual styles
+    "w-full min-w-0 rounded-md border bg-transparent text-base md:text-sm shadow-xs outline-none",
+    "border-input bg-[var(--brand-green-950)]",
+    // Text helpers
+    "file:text-foreground placeholder:text-muted-foreground selection:bg-primary selection:text-primary-foreground",
+    // Transitions
+    "transition-[color,box-shadow,border-color,background-color]",
+    // Focus (brand green ring)
+    "focus-visible:ring-[3px] focus-visible:border-[var(--brand-green-400)] focus-visible:ring-[color:var(--brand-green-300)]/40",
+    // Hover
+    "hover:border-[var(--brand-green-300)]",
+    // Error state (uses complementary pink scale)
+    "aria-invalid:border-[var(--cpink-500)] aria-invalid:focus-visible:ring-[color:var(--cpink-500)]/40",
+    // Disabled
+    "disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
+    // File input button
+    "file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium",
+  ].join(" "),
+  {
+    variants: {
+      size: {
+        reg: "h-9 px-3 py-1",
+        lg: "h-10 px-4 py-2 text-base",
+        sm: "h-8 px-2.5 text-sm",
+        mini: "h-7 px-2 text-xs",
+      },
+    },
+    defaultVariants: {
+      size: "reg",
+    },
+  }
+)
+
+type InputProps = React.ComponentProps<"input"> &
+  VariantProps<typeof inputVariants>
+
+function Input({ className, type, size, ...props }: InputProps) {
+  return (
     <input
-      ref={ref}
       type={type}
-      className={cn(
-        "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50",
-        className
-      )}
+      data-slot="input"
+      className={cn(inputVariants({ size }), className)}
       {...props}
     />
   )
-);
-Input.displayName = "Input";
+}
 
-export { Input };
-
-
+export { Input, inputVariants }

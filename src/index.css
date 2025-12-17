@@ -2,67 +2,258 @@
 @tailwind components;
 @tailwind utilities;
 
+@font-face {
+  font-family: "PP Neue Machina";
+  src: url("./assets/PPNeueMachina-Light.otf") format("opentype");
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "PP Neue Machina";
+  src: url("./assets/PPNeueMachina-Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "PP Neue Machina";
+  src: url("./assets/PPNeueMachina-Ultrabold.otf") format("opentype");
+  font-weight: 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./assets/IBMPlexMono-Thin.ttf") format("truetype");
+  font-weight: 100;
+  font-style: normal;
+  font-display: optional;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./assets/IBMPlexMono-ExtraLight.ttf") format("truetype");
+  font-weight: 200;
+  font-style: normal;
+  font-display: optional;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./assets/IBMPlexMono-Light.ttf") format("truetype");
+  font-weight: 300;
+  font-style: normal;
+  font-display: optional;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./assets/IBMPlexMono-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: optional;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./assets/IBMPlexMono-Medium.ttf") format("truetype");
+  font-weight: 500;
+  font-style: normal;
+  font-display: optional;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./assets/IBMPlexMono-SemiBold.ttf") format("truetype");
+  font-weight: 600;
+  font-style: normal;
+  font-display: optional;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./assets/IBMPlexMono-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: optional;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./assets/IBMPlexMono-ThinItalic.ttf") format("truetype");
+  font-weight: 100;
+  font-style: italic;
+  font-display: optional;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./assets/IBMPlexMono-ExtraLightItalic.ttf") format("truetype");
+  font-weight: 200;
+  font-style: italic;
+  font-display: optional;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./assets/IBMPlexMono-LightItalic.ttf") format("truetype");
+  font-weight: 300;
+  font-style: italic;
+  font-display: optional;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./assets/IBMPlexMono-Italic.ttf") format("truetype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: optional;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./assets/IBMPlexMono-MediumItalic.ttf") format("truetype");
+  font-weight: 500;
+  font-style: italic;
+  font-display: optional;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./assets/IBMPlexMono-SemiBoldItalic.ttf") format("truetype");
+  font-weight: 600;
+  font-style: italic;
+  font-display: optional;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("./assets/IBMPlexMono-BoldItalic.ttf") format("truetype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: optional;
+}
+
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-
-    --radius: 0.75rem;
+    --background: #111;
+    --foreground: var(--brand-green-50);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.141 0.005 285.823);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.141 0.005 285.823);
+    --primary: oklch(0.21 0.006 285.885);
+    --primary-foreground: oklch(0.985 0 0);
+    --secondary: oklch(0.967 0.001 286.375);
+    --secondary-foreground: oklch(0.21 0.006 285.885);
+    --muted: oklch(0.967 0.001 286.375);
+    --muted-foreground: oklch(0.552 0.016 285.938);
+    --accent: oklch(0.967 0.001 286.375);
+    --accent-foreground: oklch(0.21 0.006 285.885);
+    --destructive: oklch(0.577 0.245 27.325);
+    --destructive-foreground: oklch(0.577 0.245 27.325);
+    --border: #bae9cb;
+    --input: oklch(0.92 0.004 286.32);
+    --ring: oklch(0.871 0.006 286.286);
+    --chart-1: oklch(0.646 0.222 41.116);
+    --chart-2: oklch(0.6 0.118 184.704);
+    --chart-3: oklch(0.398 0.07 227.392);
+    --chart-4: oklch(0.828 0.189 84.429);
+    --chart-5: oklch(0.769 0.188 70.08);
+    --radius: 0.625rem;
+    --sidebar: #171717;
+    --sidebar-foreground: var(--text-primary);
+    --sidebar-primary: var(--brand-green-300);
+    --sidebar-primary-foreground: oklch(0.985 0 0);
+    --sidebar-accent: #97dfb126;
+    --sidebar-accent-foreground: var(--text-primary);
+    --sidebar-border: #97dfb166;
+    --sidebar-ring: #000;
+    --brand-green-50: #eefaf2;
+    --brand-green-100: #dcf4e5;
+    --brand-green-200: #bae9cb;
+    --brand-green-300: #97dfb1;
+    --brand-green-400: #75d497;
+    --brand-green-500: #52c97d;
+    --brand-green-600: #42a164;
+    --brand-green-700: #31794b;
+    --brand-green-800: #215032;
+    --brand-green-900: #102819;
+    --brand-green-950: #08140c;
+    --brand-green: var(--brand-green-500);
+    --brand-light-dark-green: #dcf4e514;
+    --brand-dark-green: var(--brand-green-900);
+    --brand-light-green: var(--brand-green-300);
+    --brand-blue: #5263c9;
+    --brand-dark-blue: #080a14;
+    --brand-light-blue: #8192ff;
+    --brand-off-white: #eefaF2;
+    --text-primary: #eefaF2;
+    --text-secondary: #08140c;
+    --text-tertiary: #d9d9d9;
+    --text-brand-green: var(--brand-green-500);
+    --text-brand-beige: #ce9178;
+    --text-brand-lemon: #dfd597;
+    --vb-50: #eef0fa;
+    --vb-100: #dcdff4;
+    --vb-200: #bac1e9;
+    --vb-300: #97a1df;
+    --vb-400: #7583d4;
+    --vb-500: #5263c9;
+    --vb-600: #4250a1;
+    --vb-700: #313b79;
+    --vb-800: #212750;
+    --vb-900: #101328;
+    --vb-950: #080a14;
+    --cpink-50: #faeef6;
+    --cpink-100: #f4dceb;
+    --cpink-200: #e9bad8;
+    --cpink-300: #df97c5;
+    --cpink-400: #d475b2;
+    --cpink-500: #c9529e;
+    --cpink-600: #a1427f;
+    --cpink-700: #79315f;
+    --cpink-800: #50213f;
+    --cpink-900: #28101f;
+    --cpink-950: #140810;
+    --corange-50: #faf8ee;
+    --corange-100: #f4f1dc;
+    --corange-200: #e9e3ba;
+    --corange-300: #dfd597;
+    --corange-400: #d4c775;
+    --corange-500: #c9b852;
+    --corange-600: #a19342;
+    --corange-700: #796f31;
+    --corange-800: #504921;
+    --corange-900: #282510;
+    --corange-950: #141208;
+    --error-soft: #f7a4b1;
+    --subdued-50: #ebf3ef;
+    --subdued-100: #d6e7de;
+    --subdued-200: #adcebd;
+    --subdued-300: #85b69c;
+    --subdued-400: #5c9d7b;
+    --subdued-500: #33855a;
+    --subdued-600: #296a48;
+    --subdued-700: #1f5036;
+    --subdued-800: #143524;
+    --subdued-900: #0a1b12;
+    --subdued-950: #050d09;
+    --solana-border: #498dc3;
+    --ethereum-border: #454545;
+    --balance-red: rgb(169, 38, 38);
+    --wallet-card-grey: #171717;
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+    --background: #0c0c0c;
+    --foreground: var(--brand-green-50);
+    --card: #0f0f0f;
+    --card-foreground: var(--text-primary);
+    --popover: #0f0f0f;
+    --popover-foreground: var(--text-primary);
+    --primary: var(--brand-green-500);
+    --primary-foreground: var(--text-secondary);
+    --secondary: #111820;
+    --secondary-foreground: var(--text-primary);
+    --muted: #12161b;
+    --muted-foreground: var(--text-tertiary);
+    --accent: #12161b;
+    --accent-foreground: var(--text-primary);
+    --destructive: #8a1f1f;
+    --destructive-foreground: #fff;
+    --border: #1f2a2d;
+    --input: #1f2a2d;
+    --ring: var(--brand-green-400);
   }
 
   * {
@@ -75,7 +266,54 @@
 
   body {
     @apply min-h-full bg-background text-foreground antialiased;
+    margin: 0;
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+      "Courier New", monospace;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  code {
+    font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
   }
 }
 
-
+@layer utilities {
+  .font-pp-machina {
+    font-family: "PP Neue Machina", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+      "Noto Sans", "Liberation Sans", sans-serif;
+    font-weight: 800;
+    font-size-adjust: from-font;
+  }
+  .font-pp-regular {
+    font-family: "PP Neue Machina", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+      "Noto Sans", "Liberation Sans", sans-serif;
+    font-weight: 400;
+    font-size-adjust: from-font;
+  }
+  .font-pp-light {
+    font-family: "PP Neue Machina", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+      "Noto Sans", "Liberation Sans", sans-serif;
+    font-weight: 300;
+    font-size-adjust: from-font;
+  }
+  .font-body {
+    font-size-adjust: from-font;
+  }
+  .scrollbar-thin-brand {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(82, 201, 125, 0.3) transparent;
+    scrollbar-color: color-mix(in srgb, var(--brand-green) 30%, transparent) transparent;
+  }
+  .scrollbar-thin-brand::-webkit-scrollbar {
+    width: 4px;
+  }
+  .scrollbar-thin-brand::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin-brand::-webkit-scrollbar-thumb {
+    background-color: rgba(82, 201, 125, 0.3);
+    background-color: color-mix(in srgb, var(--brand-green) 70%, transparent);
+    border-radius: 8px;
+  }
+}
