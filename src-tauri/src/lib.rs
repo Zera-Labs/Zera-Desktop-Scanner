@@ -1,4 +1,5 @@
 mod ntag216;
+mod ntag216_desktop;
 mod serial;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -15,6 +16,7 @@ pub fn run() {
             greet,
             serial::list_serial_ports,
             serial::auto_detect_proxmark_port,
+            // Proxmark3 commands (legacy)
             ntag216::read_ntag216,
             ntag216::read_ntag216_json,
             ntag216::write_ntag216_text,
@@ -23,7 +25,14 @@ pub fn run() {
             ntag216::write_ntag216_raw,
             ntag216::write_ntag216_page,
             ntag216::batch_write_ntag216_text,
-            ntag216::clone_ntag216_to_n_tags
+            ntag216::clone_ntag216_to_n_tags,
+            // Desktop NFC commands (PC/SC)
+            ntag216_desktop::read_ntag216_desktop,
+            ntag216_desktop::read_ntag216_json_desktop,
+            ntag216_desktop::write_ntag216_text_desktop,
+            ntag216_desktop::write_ntag216_uri_desktop,
+            ntag216_desktop::write_ntag216_json_desktop,
+            ntag216_desktop::check_nfc_reader,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

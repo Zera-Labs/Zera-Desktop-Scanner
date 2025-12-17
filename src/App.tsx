@@ -4,7 +4,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
 type NdefKind = "text" | "uri" | "json" | "unknown";
@@ -32,17 +31,6 @@ type WriteResult = {
   error?: string | null;
 };
 
-type SerialPortInfo = {
-  port_name: string;
-  kind: string;
-  vid?: number | null;
-  pid?: number | null;
-  serial_number?: string | null;
-  manufacturer?: string | null;
-  product?: string | null;
-};
-
-const LS_PORT_KEY = "desk_tauri:proxmark_port";
 const JSON_MIME = "application/json";
 
 function prettyJson(raw: string): { pretty: string; error: string | null } {
@@ -54,10 +42,7 @@ function prettyJson(raw: string): { pretty: string; error: string | null } {
 }
 
 function App() {
-  const [ports, setPorts] = useState<SerialPortInfo[]>([]);
-  const [port, setPort] = useState<string>(() => localStorage.getItem(LS_PORT_KEY) ?? "");
   const [deviceStatus, setDeviceStatus] = useState<string>("");
-
   const [jsonText, setJsonText] = useState<string>('{"hello":"ntag216"}');
   const [lastRead, setLastRead] = useState<Ntag216ReadResult | null>(null);
   const [status, setStatus] = useState<string>("");
@@ -123,64 +108,28 @@ function App() {
     }
   }, [jsonText]);
 
-  const portLabel = useMemo(() => {
-    if (!port) return "Auto-detect";
-    const found = ports.find((p) => p.port_name === port);
-    if (!found) return port;
-    return found.product || found.manufacturer
-      ? `${found.product ?? found.manufacturer} (${found.port_name})`
-      : found.port_name;
-  }, [port, ports]);
-
-  async function refreshPorts() {
-    setDeviceStatus("Scanning serial ports…");
+  async function checkNfcReader() {
+    setDeviceStatus("Checking NFC reader…");
     try {
-      const list = await invoke<SerialPortInfo[]>("list_serial_ports");
-      setPorts(list);
-
-      // Respect saved selection if it still exists.
-      if (port && list.some((p) => p.port_name === port)) {
-        setDeviceStatus(list.length ? `Found ${list.length} ports.` : "No serial ports found.");
-        return;
-      }
-
-      // If only one port exists, pick it.
-      if (list.length === 1) {
-        setPort(list[0].port_name);
-        setDeviceStatus("Auto-selected the only available port.");
-        return;
-      }
-
-      // Ask backend to guess Proxmark port from USB metadata / naming patterns.
-      const guess = await invoke<string | null>("auto_detect_proxmark_port");
-      if (guess) {
-        setPort(guess);
-        setDeviceStatus("Auto-detected a likely Proxmark port.");
-      } else {
-        setPort("");
-        setDeviceStatus(list.length ? "Couldn’t auto-detect; pick the Proxmark port from the list." : "No serial ports found.");
-      }
+      const status = await invoke<string>("check_nfc_reader");
+      setDeviceStatus(status);
     } catch (e) {
-      setDeviceStatus(String(e));
+      setDeviceStatus(`Reader error: ${String(e)}`);
     }
   }
 
   useEffect(() => {
-    refreshPorts();
+    checkNfcReader();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    localStorage.setItem(LS_PORT_KEY, port);
-  }, [port]);
 
   async function readJsonTag() {
     if (busy) return;
     setBusy(true);
-    setStatus("Reading… (keep tag on the Proxmark)");
+    setStatus("Reading… (place tag on NFC reader)");
     setLastRead(null);
     try {
-      const res = await invoke<Ntag216ReadResult>("read_ntag216", { port });
+      const res = await invoke<Ntag216ReadResult>("read_ntag216_desktop");
       setLastRead(res);
       if (res.ndef?.kind === "json" && res.ndef.json) {
         const { pretty, error } = prettyJson(res.ndef.json);
@@ -192,7 +141,9 @@ function App() {
         setStatus("No NDEF found on tag.");
       }
     } catch (e) {
-      setStatus(String(e));
+      const errorMsg = String(e);
+      setStatus(`Error: ${errorMsg}`);
+      console.error("Read error:", e);
     } finally {
       setBusy(false);
     }
@@ -201,9 +152,9 @@ function App() {
   async function writeJsonTag() {
     if (busy) return;
     setBusy(true);
-    setStatus("Checking tag… (keep tag on the Proxmark)");
+    setStatus("Checking tag… (place tag on NFC reader)");
     try {
-      const before = await invoke<Ntag216ReadResult>("read_ntag216", { port });
+      const before = await invoke<Ntag216ReadResult>("read_ntag216_desktop");
       setLastRead(before);
 
       const willOverwrite = !before.is_blank;
@@ -218,9 +169,8 @@ function App() {
         }
       }
 
-      setStatus(willOverwrite ? "Overwriting… (keep tag on the Proxmark)" : "Writing… (keep tag on the Proxmark)");
-      const res = await invoke<WriteResult>("write_ntag216_json", {
-        port,
+      setStatus(willOverwrite ? "Overwriting… (place tag on NFC reader)" : "Writing… (place tag on NFC reader)");
+      const res = await invoke<WriteResult>("write_ntag216_json_desktop", {
         json: jsonText,
         options: { existing_tag_behavior: "overwrite" },
       });
@@ -244,45 +194,23 @@ function App() {
         <header className="space-y-2">
           <h1 className="text-2xl font-semibold tracking-tight">NTAG216 JSON</h1>
           <p className="text-sm text-muted-foreground">
-            Auto-detect Proxmark port, then read/write an
+            Desktop NFC reader for NTAG216 tags. Read/write an
             <span className="font-mono"> application/json</span> NDEF record.
           </p>
         </header>
 
         <Card>
           <CardHeader>
-            <CardTitle>Device</CardTitle>
+            <CardTitle>NFC Reader</CardTitle>
             <CardDescription>
-              If you have only one serial device plugged in, we’ll select it automatically.
+              Auto-detects PC/SC-compatible NFC readers (ACR122U, PN532, etc.)
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="grid gap-4 md:grid-cols-[1fr_auto]">
-              <div className="space-y-2">
-                <Label htmlFor="portSelect">Proxmark port</Label>
-                <Select id="portSelect" value={port} onChange={(e) => setPort(e.currentTarget.value)}>
-                  <option value="">Auto-detect</option>
-                  {ports.map((p) => {
-                    const label =
-                      p.product || p.manufacturer
-                        ? `${p.product ?? p.manufacturer} — ${p.port_name}`
-                        : p.port_name;
-                    return (
-                      <option key={p.port_name} value={p.port_name}>
-                        {label}
-                      </option>
-                    );
-                  })}
-                </Select>
-                <div className="text-xs text-muted-foreground">
-                  Selected: <span className="font-mono">{portLabel}</span>
-                </div>
-              </div>
-              <div className="flex items-end">
-                <Button variant="secondary" onClick={refreshPorts}>
-                  Refresh
-                </Button>
-              </div>
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" onClick={checkNfcReader} disabled={busy}>
+                Check Reader
+              </Button>
             </div>
 
             {deviceStatus ? (
