@@ -1,35 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
+import { AlertCircle, FolderSearch, Loader2, ScanText, Upload } from "lucide-react";
 
+import PrivateAssetsGrid, { createMockPrivateCashVouchers, type PrivateCashVoucherTile } from "@/components/PrivateAssetsGrid";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-
-type NdefKind = "text" | "uri" | "json" | "unknown";
-
-type NdefSummary = {
-  kind: NdefKind;
-  text?: string | null;
-  uri?: string | null;
-  language?: string | null;
-  mime_type?: string | null;
-  json?: string | null;
-  message_hex: string;
-};
-
-type Ntag216ReadResult = {
-  uid?: string | null;
-  is_blank: boolean;
-  ndef?: NdefSummary | null;
-};
-
-type WriteResult = {
-  uid?: string | null;
-  ok: boolean;
-  skipped: boolean;
-  error?: string | null;
-};
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useNtag216Json } from "@/hooks/useNtag216";
 
 const JSON_MIME = "application/json";
 
@@ -42,40 +20,35 @@ function prettyJson(raw: string): { pretty: string; error: string | null } {
 }
 
 function App() {
-  const [deviceStatus, setDeviceStatus] = useState<string>("");
-  const [jsonText, setJsonText] = useState<string>('{"hello":"ntag216"}');
-  const [lastRead, setLastRead] = useState<Ntag216ReadResult | null>(null);
-  const [status, setStatus] = useState<string>("");
-  const [busy, setBusy] = useState<boolean>(false);
+  const [jsonText, setJsonText] = useState('{"hello":"ntag216"}');
+  const [showStatusHistory, setShowStatusHistory] = useState(false);
 
-  const [overwritePrompt, setOverwritePrompt] = useState<{
-    uid: string;
-    kind: string;
-  } | null>(null);
-  const overwriteResolveRef = useRef<((ok: boolean) => void) | null>(null);
+  const [voucherTiles, setVoucherTiles] = useState<PrivateCashVoucherTile[]>(() => createMockPrivateCashVouchers());
+  const [voucherLoading, setVoucherLoading] = useState(false);
+  const [hasScannedVouchers, setHasScannedVouchers] = useState(false);
+  const assetFileInputRef = useRef<HTMLInputElement>(null);
 
-  function requestOverwriteConfirm(uid: string, kind: string): Promise<boolean> {
-    return new Promise((resolve) => {
-      overwriteResolveRef.current = resolve;
-      setOverwritePrompt({ uid, kind });
-    });
-  }
+  const [walletReady] = useState(true);
+  const [walletNeedsExtensionSwitch] = useState(false);
+  const [walletMissingZera] = useState(false);
+  const [protocolInitialized, setProtocolInitialized] = useState(true);
+  const [nullifierSetInitialized, setNullifierSetInitialized] = useState(true);
+  const [zeraPrice] = useState<number | null>(1.234567);
+  const [loading, setLoading] = useState(false);
 
-  function resolveOverwriteConfirm(ok: boolean) {
-    overwriteResolveRef.current?.(ok);
-    overwriteResolveRef.current = null;
-    setOverwritePrompt(null);
-  }
-
-  const lastReadJson = useMemo(() => {
-    if (lastRead?.ndef?.kind !== "json") return null;
-    return lastRead.ndef.json ?? null;
-  }, [lastRead]);
-
-  const lastReadJsonFmt = useMemo(() => {
-    if (!lastReadJson) return null;
-    return prettyJson(lastReadJson);
-  }, [lastReadJson]);
+  const {
+    readerStatus,
+    readerLoading,
+    checkReader,
+    readJson,
+    writeJson,
+    status,
+    statusHistory,
+    statusIsError,
+    isBusy,
+    isReading,
+    pushStatus,
+  } = useNtag216Json();
 
   const jsonSizing = useMemo(() => {
     try {
@@ -85,316 +58,373 @@ function App() {
       const typeLen = JSON_MIME.length;
       const payloadLenFieldBytes = payloadBytes <= 0xff ? 1 : 4;
       const ndefLen = 1 + 1 + payloadLenFieldBytes + typeLen + payloadBytes;
-      const tlvHeaderBytes = ndefLen <= 0xfe ? 2 : 4; // 0x03 + len OR 0x03 0xFF hi lo
-      const tlvLen = tlvHeaderBytes + ndefLen + 1; // + 0xFE terminator
+      const tlvHeaderBytes = ndefLen <= 0xfe ? 2 : 4;
+      const tlvLen = tlvHeaderBytes + ndefLen + 1;
       const paddedLen = Math.ceil(tlvLen / 4) * 4;
       const pages = paddedLen / 4;
-      // NTAG216 CC reports 0x6D * 8 = 872 bytes usable NDEF memory.
       const maxBytes = 872;
       const fits = paddedLen <= maxBytes;
-      return {
-        ok: true as const,
-        minified,
-        payloadBytes,
-        ndefLen,
-        tlvLen,
-        paddedLen,
-        pages,
-        maxBytes,
-        fits,
-      };
+      return { ok: true as const, minified, payloadBytes, ndefLen, tlvLen, paddedLen, pages, maxBytes, fits };
     } catch (e) {
       return { ok: false as const, error: String(e) };
     }
   }, [jsonText]);
 
-  async function checkNfcReader() {
-    setDeviceStatus("Checking NFC reader…");
-    try {
-      const status = await invoke<string>("check_nfc_reader");
-      setDeviceStatus(status);
-    } catch (e) {
-      setDeviceStatus(`Reader error: ${String(e)}`);
+  const busy = isBusy;
+  const canRead = !busy;
+  const canWrite = !busy && Boolean(jsonText.trim());
+  const writeDisabledReason = !jsonText.trim() ? "Add a JSON payload to write" : busy ? "Busy" : undefined;
+
+  async function handleReadJson() {
+    if (!canRead) return;
+    const res = await readJson.mutateAsync();
+    if (res?.ndef?.kind === "json" && res.ndef.json) {
+      const { pretty, error } = prettyJson(res.ndef.json);
+      setJsonText(pretty);
+      if (error) {
+        pushStatus(`Read JSON from tag, but parse failed: ${error}`);
+      }
+    } else if (res?.ndef) {
+      pushStatus(`Tag has NDEF (${res.ndef.kind}), not JSON.`);
+    } else {
+      pushStatus("No NDEF found on tag.");
     }
+  }
+
+  async function handleWriteJson() {
+    if (!canWrite) return;
+    await writeJson.mutateAsync({ json: jsonText });
+  }
+
+  function handleLocateAssets() {
+    setVoucherLoading(true);
+    pushStatus("Scanning for voucher files…");
+    setTimeout(() => {
+      setVoucherTiles(createMockPrivateCashVouchers(Date.now()));
+      setVoucherLoading(false);
+      setHasScannedVouchers(true);
+      pushStatus("Loaded vouchers from mock folder.");
+    }, 600);
+  }
+
+  function handleAssetFilesSelected(event: ChangeEvent<HTMLInputElement>) {
+    setVoucherLoading(true);
+    const files = Array.from(event.target.files ?? []);
+    setTimeout(() => {
+      setVoucherTiles(createMockPrivateCashVouchers(Date.now()));
+      setVoucherLoading(false);
+      setHasScannedVouchers(true);
+      pushStatus(files.length ? `Loaded ${files.length} file(s) into vouchers.` : "No files selected.");
+    }, 400);
+  }
+
+  function handleClearAssets() {
+    setVoucherTiles([]);
+    setHasScannedVouchers(true);
+    pushStatus("Cleared voucher list.");
+  }
+
+  function initializeProtocol() {
+    setLoading(true);
+    pushStatus("Initializing protocol…");
+    setTimeout(() => {
+      setProtocolInitialized(true);
+      setLoading(false);
+      pushStatus("Protocol initialized.");
+    }, 800);
+  }
+
+  function initializeNullifierSet() {
+    setLoading(true);
+    pushStatus("Initializing nullifier set…");
+    setTimeout(() => {
+      setNullifierSetInitialized(true);
+      setLoading(false);
+      pushStatus("Nullifier set initialized.");
+    }, 800);
   }
 
   useEffect(() => {
-    checkNfcReader();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function readJsonTag() {
-    if (busy) return;
-    setBusy(true);
-    setStatus("Reading… (place tag on NFC reader)");
-    setLastRead(null);
-    try {
-      const res = await invoke<Ntag216ReadResult>("read_ntag216_desktop");
-      setLastRead(res);
-      if (res.ndef?.kind === "json" && res.ndef.json) {
-        const { pretty, error } = prettyJson(res.ndef.json);
-        setJsonText(pretty);
-        setStatus(error ? `Read JSON from tag, but it failed to parse in UI: ${error}` : "Read JSON from tag.");
-      } else if (res.ndef) {
-        setStatus(`Tag has NDEF (${res.ndef.kind}), not JSON.`);
-      } else {
-        setStatus("No NDEF found on tag.");
-      }
-    } catch (e) {
-      const errorMsg = String(e);
-      setStatus(`Error: ${errorMsg}`);
-      console.error("Read error:", e);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function writeJsonTag() {
-    if (busy) return;
-    setBusy(true);
-    setStatus("Checking tag… (place tag on NFC reader)");
-    try {
-      const before = await invoke<Ntag216ReadResult>("read_ntag216_desktop");
-      setLastRead(before);
-
-      const willOverwrite = !before.is_blank;
-      if (willOverwrite) {
-        const uid = before.uid ?? "(unknown uid)";
-        const kind = before.ndef?.kind ?? "unknown";
-        setStatus("Tag is not blank — confirm overwrite…");
-        const ok = await requestOverwriteConfirm(uid, kind);
-        if (!ok) {
-          setStatus("Cancelled (did not overwrite existing tag).");
-          return;
-        }
-      }
-
-      setStatus(willOverwrite ? "Overwriting… (place tag on NFC reader)" : "Writing… (place tag on NFC reader)");
-      const res = await invoke<WriteResult>("write_ntag216_json_desktop", {
-        json: jsonText,
-        options: { existing_tag_behavior: "overwrite" },
-      });
-      setStatus(
-        res.skipped
-          ? "Skipped (already written)."
-          : willOverwrite
-          ? "Overwrote tag with JSON."
-          : "Wrote JSON to blank tag."
-      );
-    } catch (e) {
-      setStatus(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
+    void checkReader();
+  }, [checkReader]);
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[var(--background)] text-[var(--text-primary)]">
-      <div className="pointer-events-none absolute -left-40 top-0 -z-10 h-80 w-80 rounded-full bg-[var(--brand-green-400)]/15 blur-3xl" />
-      <div className="pointer-events-none absolute right-[-120px] top-24 -z-10 h-96 w-96 rounded-full bg-[var(--vb-500)]/15 blur-3xl" />
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-64 bg-gradient-to-t from-[var(--brand-dark-green)]/60 to-transparent" />
+    <div className="min-h-screen bg-[var(--background)] text-[var(--text-primary)]">
+      <div className="px-6 py-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <h1 className="font-pp-machina text-[24px] font-normal leading-[32px] tracking-[-0.006em] text-[var(--text-primary)]">
+          Offline Cash
+        </h1>
+        <div className="flex flex-wrap items-center gap-3 md:gap-4">
+          {walletNeedsExtensionSwitch ? (
+            <div className="flex items-center gap-2 rounded-[12px] border border-yellow-400/50 bg-yellow-500/10 px-4 py-2 text-[11px] text-yellow-100 max-w-[420px]">
+              <span className="font-medium text-yellow-50/90">Switch wallets in your extension.</span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="h-5 w-5 rounded-full border border-yellow-200/70 text-[11px] font-semibold text-yellow-50/90"
+                    aria-label="Why is this required?"
+                  >
+                    ?
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent className="tooltip-brand max-w-xs text-[11px] leading-relaxed">
+                  Select this wallet in your browser extension before attempting NFC actions so transactions do not fail.
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          ) : null}
+          {walletMissingZera ? (
+            <div className="flex items-center gap-2 rounded-[12px] border border-[var(--brand-light-green)]/60 bg-[var(--brand-dark-green)]/40 px-4 py-2 text-[11px] text-[var(--brand-green-50)] max-w-[420px]">
+              <span className="font-medium text-[var(--brand-green-50)]/90">Keep some ZERA in this wallet to write.</span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="h-5 w-5 rounded-full border border-[var(--brand-light-green)]/70 text-[11px] font-semibold text-[var(--brand-green-50)]/80"
+                    aria-label="Why is ZERA required?"
+                  >
+                    ?
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent className="tooltip-brand max-w-xs text-[11px] leading-relaxed">
+                  Offline Cash currently burns a small amount of ZERA when writing to the contract. Keep a small balance so
+                  writes can complete.
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          ) : null}
+          <Button
+            variant="greenTint"
+            onClick={handleReadJson}
+            className="gap-1.5 text-[var(--brand-green-50)] text-[12px] px-1 py-0.5 h-[40px] rounded-[12px]"
+            disabled={!canRead}
+            title={busy ? "Busy" : undefined}
+          >
+            {busy && isReading ? <Loader2 className="size-4 animate-spin" /> : <ScanText className="size-6" />}
+            {busy && isReading ? "Working…" : "Read"}
+          </Button>
+          <Button
+            variant="greenTint"
+            onClick={handleWriteJson}
+            className="gap-1.5 text-[var(--brand-green-50)] text-[12px] px-1 py-0.5 h-[40px] rounded-[12px]"
+            disabled={!canWrite}
+            title={writeDisabledReason}
+          >
+            {busy && !isReading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-6" />}
+            {busy && !isReading ? "Working…" : "Write"}
+          </Button>
+        </div>
+      </div>
 
-      <main className="relative mx-auto max-w-6xl space-y-6 px-4 py-10">
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div className="space-y-2">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">Desktop NFC · NTAG216</p>
-            <h1 className="font-pp-machina text-3xl leading-tight text-[var(--text-primary)]">NTAG216 JSON Studio</h1>
-            <p className="text-sm text-[var(--text-tertiary)]">
-              Modern desk UI to auto-detect your NFC reader, validate payload sizing, and read/write{" "}
-              <span className="font-mono">{JSON_MIME}</span> records.
+      <div className="px-6">
+        <div className="mb-4 flex items-start gap-3 rounded-xl border border-[var(--corange-500)] bg-[color-mix(in_srgb,_var(--corange-900)_80%,_transparent)] px-4 py-3 text-xs text-[var(--corange-50)]">
+          <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--corange-300)]" />
+          <div className="space-y-1">
+            <p className="font-medium text-[11px] uppercase tracking-[0.12em] text-[var(--corange-200)]">Early demo - use with caution</p>
+            <p className="leading-relaxed">
+              Offline Cash is an early, partial implementation intended for demonstration and testing only. Use at your own risk and
+              only write small amounts you are fully prepared to lose.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={readJsonTag} disabled={busy}>
-              {busy ? "Working…" : "Quick read"}
-            </Button>
-          </div>
         </div>
+      </div>
 
-        <Card
-          variant="outline"
-          tone="green"
-          className="border border-[var(--brand-light-green)]/60 bg-[var(--brand-dark-green)]/50 backdrop-blur"
-        >
-          <CardHeader className="gap-3">
-            <CardTitle className="text-lg">NFC Reader</CardTitle>
-            <CardDescription>
-              Auto-detects PC/SC-compatible NFC readers (ACR122U, PN532, etc.)
-            </CardDescription>
+      <section className="px-6 py-6 grid gap-6 lg:grid-cols-[2fr_1fr]">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <h3 className="text-[16px] font-semibold">Private assets</h3>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button variant="outline" disabled={voucherLoading} onClick={handleLocateAssets} className="gap-1.5" expand>
+                {voucherLoading ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Loading
+                  </>
+                ) : (
+                  <>
+                    <FolderSearch className="size-4" />
+                    Locate assets
+                  </>
+                )}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={voucherLoading}
+                onClick={() => assetFileInputRef.current?.click()}
+                className="gap-1.5"
+              >
+                {voucherLoading ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Processing
+                  </>
+                ) : (
+                  "Choose files"
+                )}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={voucherLoading || voucherTiles.length === 0}
+                onClick={handleClearAssets}
+                className="gap-1.5 text-[var(--corange-300)] hover:text-[var(--corange-100)]"
+              >
+                Clear assets
+              </Button>
+              <input
+                ref={assetFileInputRef}
+                type="file"
+                accept="application/json,.json"
+                multiple
+                className="hidden"
+                onChange={handleAssetFilesSelected}
+              />
+            </div>
+          </div>
+          <PrivateAssetsGrid vouchers={voucherTiles} />
+          {hasScannedVouchers && voucherTiles.length === 0 ? (
+            <p className="text-xs text-[var(--text-tertiary)]">
+              No voucher files were found in the selected folder. Add voucher JSON files and click Choose files.
+            </p>
+          ) : null}
+        </div>
+        <Card variant="darkSolidGrey" className="border border-[var(--brand-light-green)]/25 min-h-[540px]">
+          <CardHeader>
+            <CardTitle className="text-[16px] font-normal">Details panel</CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm text-[var(--text-tertiary)]">
+            Placeholder for upcoming vertical panel content.
+          </CardContent>
+        </Card>
+      </section>
+
+      <section className="px-6 pb-6 grid gap-6 lg:grid-cols-[1.4fr_1fr]">
+        <Card variant="darkSolidGrey" className="border border-[var(--brand-light-green)]/25">
+          <CardHeader>
+            <CardTitle className="text-[16px] font-normal">NFC JSON payload</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Button variant="secondary" onClick={checkNfcReader} disabled={busy}>
-                Check Reader
-              </Button>
+            <div className="space-y-2">
+              <Label htmlFor="json">JSON payload</Label>
+              <Textarea
+                id="json"
+                value={jsonText}
+                onChange={(e) => setJsonText(e.currentTarget.value)}
+                rows={10}
+                className="rounded-xl border-[var(--brand-light-green)]/35 bg-[var(--wallet-card-grey)] font-mono text-sm leading-6 text-[var(--text-primary)] shadow-[0_0_0_1px_rgba(82,201,125,0.08)]"
+              />
             </div>
-            <div className="rounded-lg border border-[var(--brand-light-green)]/25 bg-[var(--brand-light-dark-green)] px-3 py-2 text-sm text-[var(--text-primary)]">
-              {deviceStatus || "Waiting for device scan…"}
-            </div>
+            {jsonSizing.ok ? (
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-lg border border-[var(--brand-light-green)]/25 bg-[var(--brand-light-dark-green)] px-4 py-3">
+                  <div className="text-xs text-[var(--text-tertiary)]">Minified</div>
+                  <div className="font-mono text-sm text-[var(--text-primary)]">{jsonSizing.payloadBytes} bytes</div>
+                </div>
+                <div className="rounded-lg border border-[var(--brand-light-green)]/25 bg-[var(--brand-light-dark-green)] px-4 py-3">
+                  <div className="text-xs text-[var(--text-tertiary)]">On-tag (TLV+pads)</div>
+                  <div className="font-mono text-sm text-[var(--text-primary)]">
+                    {jsonSizing.paddedLen}/{jsonSizing.maxBytes} bytes
+                  </div>
+                </div>
+                <div className="rounded-lg border border-[var(--brand-light-green)]/25 bg-[var(--brand-light-dark-green)] px-4 py-3">
+                  <div className="text-xs text-[var(--text-tertiary)]">Pages used</div>
+                  <div className="font-mono text-sm text-[var(--text-primary)]">{jsonSizing.pages}</div>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                JSON parse error: {jsonSizing.error}
+              </div>
+            )}
           </CardContent>
         </Card>
 
         <Card variant="darkSolidGrey" className="border border-[var(--brand-light-green)]/25">
-          <CardHeader className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-            <div className="space-y-1">
-              <CardTitle className="font-pp-machina text-xl">JSON Tag</CardTitle>
-              <CardDescription>
-                Writes as an NDEF MIME record (<span className="font-mono">{JSON_MIME}</span>). Payload is validated and
-                minified in Rust.
-              </CardDescription>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={readJsonTag} disabled={busy}>
-                {busy ? "Working…" : "Read JSON"}
-              </Button>
-              <Button onClick={writeJsonTag} disabled={busy || !jsonText.trim()}>
-                {busy ? "Working…" : "Write JSON"}
-              </Button>
-            </div>
+          <CardHeader>
+            <CardTitle className="text-[16px] font-normal">Reader status</CardTitle>
           </CardHeader>
-          <CardContent className="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
-            <div className="space-y-3">
-              <div className="space-y-2">
-                <Label htmlFor="json">JSON payload</Label>
-                <Textarea
-                  id="json"
-                  value={jsonText}
-                  onChange={(e) => setJsonText(e.currentTarget.value)}
-                  rows={14}
-                  className="rounded-xl border-[var(--brand-light-green)]/35 bg-[var(--brand-dark-green)]/60 font-mono text-sm leading-6 text-[var(--text-primary)] shadow-[0_0_0_1px_rgba(82,201,125,0.08)]"
-                />
-              </div>
-              {jsonSizing.ok ? (
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-lg border border-[var(--brand-light-green)]/25 bg-[var(--brand-light-dark-green)] px-4 py-3">
-                    <div className="text-xs text-[var(--text-tertiary)]">Minified</div>
-                    <div className="font-mono text-sm text-[var(--text-primary)]">{jsonSizing.payloadBytes} bytes</div>
-                  </div>
-                  <div className="rounded-lg border border-[var(--brand-light-green)]/25 bg-[var(--brand-light-dark-green)] px-4 py-3">
-                    <div className="text-xs text-[var(--text-tertiary)]">On-tag (TLV+pads)</div>
-                    <div className="font-mono text-sm text-[var(--text-primary)]">
-                      {jsonSizing.paddedLen}/{jsonSizing.maxBytes} bytes
-                    </div>
-                  </div>
-                  <div className="rounded-lg border border-[var(--brand-light-green)]/25 bg-[var(--brand-light-dark-green)] px-4 py-3">
-                    <div className="text-xs text-[var(--text-tertiary)]">Pages used</div>
-                    <div className="font-mono text-sm text-[var(--text-primary)]">{jsonSizing.pages}</div>
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                  JSON parse error: {jsonSizing.error}
-                </div>
-              )}
+          <CardContent className="space-y-4">
+            <div className="rounded-lg border border-[var(--brand-light-green)]/25 bg-[var(--brand-light-dark-green)] px-3 py-2 text-sm text-[var(--text-primary)]">
+              {readerLoading ? "Checking NFC reader…" : readerStatus || "Waiting for device scan…"}
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => void checkReader()} disabled={busy}>
+                Check reader
+              </Button>
+            </div>
+            {status ? (
               <div
-                className={`rounded-lg border px-3 py-2 text-sm ${
-                  status
-                    ? "border-[var(--brand-light-green)]/35 bg-[var(--brand-light-dark-green)] text-[var(--text-primary)]"
-                    : "border-transparent bg-transparent text-[var(--text-tertiary)]"
+                className={`rounded-md border px-3 py-3 text-xs ${
+                  statusIsError
+                    ? "border-[var(--error-soft)]/40 text-[var(--error-soft)]"
+                    : "border-white/10 text-[var(--text-tertiary)]"
                 }`}
               >
-                {status || "Ready to read or write."}
+                <div className="flex items-start justify-between gap-3">
+                  <p className="whitespace-pre-line text-left">{status}</p>
+                  {statusHistory.length > 1 ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-auto px-2 text-[11px] text-[var(--brand-green-50)]"
+                      onClick={() => setShowStatusHistory((prev) => !prev)}
+                    >
+                      {showStatusHistory ? "Hide logs" : "Show logs"}
+                    </Button>
+                  ) : null}
+                </div>
+                {showStatusHistory ? (
+                  <div className="mt-3 max-h-40 space-y-1 overflow-y-auto rounded bg-black/20 px-3 py-2 text-[11px] text-[var(--text-tertiary)]/90">
+                    {statusHistory.map((entry, index) => (
+                      <p key={`${entry}-${index}`} className="whitespace-pre-line">
+                        {entry}
+                      </p>
+                    ))}
+                  </div>
+                ) : null}
               </div>
-            </div>
-
-            <div className="space-y-4">
-              <Card variant="subtleGreen" className="border border-[var(--brand-light-green)]/25">
-                <CardContent className="space-y-2">
-                  <div className="text-xs uppercase tracking-[0.14em] text-[var(--text-tertiary)]">Capacity check</div>
-                  {jsonSizing.ok ? (
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-sm">
-                        <span>Fits tag</span>
-                        <span className={jsonSizing.fits ? "text-[var(--text-brand-green)]" : "text-destructive"}>
-                          {jsonSizing.fits ? "Yes" : "Too large"}
-                        </span>
-                      </div>
-                      <div className="text-xs text-[var(--text-tertiary)]">
-                        TLV length {jsonSizing.tlvLen} bytes · NDEF {jsonSizing.ndefLen} bytes
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-sm text-destructive">Invalid JSON</div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {lastRead ? (
-                <Card variant="dark" className="border border-[var(--brand-light-green)]/20">
-                  <CardContent className="space-y-3">
-                    <div className="grid gap-3 text-sm md:grid-cols-2">
-                      <div className="space-y-1">
-                        <div className="text-xs text-[var(--text-tertiary)]">UID</div>
-                        <div className="font-mono text-[13px]">{lastRead.uid ?? "(unknown)"}</div>
-                      </div>
-                      <div className="space-y-1">
-                        <div className="text-xs text-[var(--text-tertiary)]">Blank</div>
-                        <div>{String(lastRead.is_blank)}</div>
-                      </div>
-                      <div className="md:col-span-2 space-y-1">
-                        <div className="text-xs text-[var(--text-tertiary)]">NDEF</div>
-                        <div className="font-mono text-[13px]">
-                          {lastRead.ndef
-                            ? lastRead.ndef.kind === "json"
-                              ? `json (${(lastRead.ndef.json ?? "").length} chars)`
-                              : `${lastRead.ndef.kind} ${lastRead.ndef.text ?? lastRead.ndef.uri ?? ""}`
-                            : "(none)"}
-                        </div>
-                      </div>
-                    </div>
-                    {lastRead.ndef?.kind === "json" && lastRead.ndef.json ? (
-                      <div className="space-y-2">
-                        <div className="text-xs text-[var(--text-tertiary)]">Decoded JSON (from tag)</div>
-                        <pre className="scrollbar-thin-brand max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-[var(--brand-light-green)]/20 bg-black/40 p-3 font-mono text-[12px]">
-                          {lastReadJsonFmt?.pretty ?? lastRead.ndef.json}
-                        </pre>
-                        {lastReadJsonFmt?.error ? (
-                          <div className="text-xs text-destructive">Parse error: {lastReadJsonFmt.error}</div>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </CardContent>
-                </Card>
-              ) : (
-                <Card variant="ghost" className="border border-dashed border-[var(--brand-light-green)]/30">
-                  <CardContent className="text-sm text-[var(--text-tertiary)]">
-                    No tag scanned yet. Tap a tag to preview its NDEF summary here.
-                  </CardContent>
-                </Card>
-              )}
-            </div>
+            ) : null}
           </CardContent>
         </Card>
-      </main>
+      </section>
 
-      {overwritePrompt ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <button
-            type="button"
-            className="absolute inset-0 bg-black/50"
-            aria-label="Close overwrite dialog"
-            onClick={() => resolveOverwriteConfirm(false)}
-          />
-          <div className="relative w-full max-w-md rounded-xl border border-[var(--brand-light-green)]/30 bg-[var(--background)] p-5 shadow-lg">
-            <div className="space-y-2">
-              <div className="text-lg font-semibold text-[var(--text-primary)]">Overwrite tag?</div>
-              <div className="text-sm text-[var(--text-tertiary)]">
-                This tag (<span className="font-mono text-[var(--text-primary)]">{overwritePrompt.uid}</span>) already
-                contains <span className="font-mono text-[var(--text-primary)]">{overwritePrompt.kind}</span> data.
-                Overwriting will replace it.
-              </div>
-            </div>
-            <div className="mt-5 flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => resolveOverwriteConfirm(false)}>
-                Cancel
-              </Button>
-              <Button variant="destructive" onClick={() => resolveOverwriteConfirm(true)}>
-                Overwrite
-              </Button>
-            </div>
+      <section className="px-6 pb-4 space-y-3">
+        {!walletReady ? (
+          <div className="flex items-center gap-2 text-xs text-[var(--text-tertiary)]">
+            <AlertCircle className="size-4 text-[var(--corange-400)]" />
+            <span>Connect a Solana wallet with Privy to use Offline Cash.</span>
           </div>
-        </div>
-      ) : null}
+        ) : null}
+        {walletReady && protocolInitialized === false ? (
+          <div className="flex items-center justify-between rounded-md border border-[var(--brand-light-green)]/40 bg-[var(--brand-light-dark-green)]/30 px-4 py-3 text-xs text-[var(--text-primary)]">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="size-4 text-[var(--brand-green)]" />
+              <span>Protocol is not initialized for this wallet yet.</span>
+            </div>
+            <Button size="sm" variant="greenTint" disabled={loading} onClick={initializeProtocol} expand>
+              {loading ? "Initializing..." : "Initialize protocol"}
+            </Button>
+          </div>
+        ) : null}
+        {walletReady && protocolInitialized && nullifierSetInitialized === false ? (
+          <div className="flex items-center justify-between rounded-md border border-[var(--brand-light-green)]/40 bg-[var(--brand-light-dark-green)]/20 px-4 py-3 text-xs text-[var(--text-primary)]">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="size-4 text-[var(--brand-green)]" />
+              <span>Nullifier set must be initialized once before withdrawals.</span>
+            </div>
+            <Button size="sm" variant="outline" disabled={loading} onClick={initializeNullifierSet} expand>
+              {loading ? "Initializing..." : "Initialize nullifier set"}
+            </Button>
+          </div>
+        ) : null}
+        {zeraPrice ? (
+          <div className="text-xs text-[var(--text-tertiary)]">
+            Current ZERA price: <span className="text-[var(--brand-green-50)]">${zeraPrice.toFixed(6)}</span>
+          </div>
+        ) : null}
+      </section>
     </div>
   );
 }
