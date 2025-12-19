@@ -119,8 +119,7 @@ export default function PrivateAssetCard({
         <img
           src={isFull ? cubeFilled : cubeEmpty}
           alt={isFull ? 'Zera cube (full)' : 'Zera cube (empty)'}
-          className={cn('w-16 h-16 select-none', isStale && 'opacity-50')}
-          draggable={false}
+          className={cn('w-16 h-16', isStale && 'opacity-50')}
         />
       </div>
 
