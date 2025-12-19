@@ -1,0 +1,5 @@
+export const IMPORT_DEBOUNCE_MS = 500;
+export const PROTOCOL_INIT_DELAY_MS = 800;
+export const NULLIFIER_INIT_DELAY_MS = 800;
+export const DRAG_ACTIVATE_THRESHOLD_PX = 5;
+

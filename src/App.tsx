@@ -3,7 +3,7 @@ import { listen, TauriEvent } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { AlertCircle, FolderSearch, Loader2, ScanText } from "lucide-react";
 
-import PrivateAssetsGrid, { createMockPrivateCashVouchers, type PrivateCashVoucherTile } from "@/components/PrivateAssetsGrid";
+import PrivateAssetsGrid from "@/components/PrivateAssetsGrid";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -14,47 +14,9 @@ import TagStatus from "@/components/TagStatus";
 import TagContentPreview from "@/components/TagContentPreview";
 import WriteZone from "@/components/WriteZone";
 import OverwriteConfirmModal from "@/components/OverwriteConfirmModal";
-
-function prettyJson(raw: string): { pretty: string; error: string | null } {
-  try {
-    return { pretty: JSON.stringify(JSON.parse(raw), null, 2), error: null };
-  } catch (e) {
-    return { pretty: raw, error: String(e) };
-  }
-}
-
-function buildVoucher(parsed: any, idSource?: string): PrivateCashVoucherTile {
-  const idFromSource = idSource
-    ? idSource.replace(/^.*[\\/]/, "").replace(/\.json$/i, "")
-    : undefined;
-
-  const voucher: PrivateCashVoucherTile = {
-    id: parsed.id || idFromSource || String(Date.now()),
-    voucherId: parsed.voucherId,
-    amount: parsed.amount,
-    recipient: parsed.recipient,
-    secret: parsed.secret,
-    salt: parsed.salt,
-    txSignature: parsed.txSignature,
-    createdAt: parsed.createdAt || new Date().toISOString(),
-  };
-
-  const required = [
-    voucher.voucherId,
-    voucher.amount,
-    voucher.recipient,
-    voucher.secret,
-    voucher.salt,
-    voucher.txSignature,
-    voucher.createdAt,
-  ];
-
-  if (required.some((field) => field === undefined || field === null)) {
-    throw new Error("Missing required voucher fields.");
-  }
-
-  return voucher;
-}
+import { createMockPrivateCashVouchers, type PrivateCashVoucherTile, buildVoucher } from "@/lib/voucher";
+import { prettyJson } from "@/lib/utils";
+import { IMPORT_DEBOUNCE_MS, NULLIFIER_INIT_DELAY_MS, PROTOCOL_INIT_DELAY_MS } from "@/lib/constants";
 
 function App() {
   const [jsonText, setJsonText] = useState('{"hello":"ntag216"}');
@@ -99,7 +61,6 @@ function App() {
   const canRead = !busy;
   const canWrite = !busy && Boolean(jsonText.trim());
   const lastImportTsRef = useRef(0);
-  const IMPORT_DEBOUNCE_MS = 500;
 
   const claimImportSlot = (hasFiles: boolean) => {
     if (!hasFiles) return false;
@@ -373,7 +334,7 @@ function App() {
       setProtocolInitialized(true);
       setLoading(false);
       pushStatus("Protocol initialized.");
-    }, 800);
+    }, PROTOCOL_INIT_DELAY_MS);
   }
 
   function initializeNullifierSet() {
@@ -383,7 +344,7 @@ function App() {
       setNullifierSetInitialized(true);
       setLoading(false);
       pushStatus("Nullifier set initialized.");
-    }, 800);
+    }, NULLIFIER_INIT_DELAY_MS);
   }
 
 
