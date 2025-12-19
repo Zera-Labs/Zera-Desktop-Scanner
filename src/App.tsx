@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useNtag216Json } from "@/hooks/useNtag216";
+import TopBar from "@/components/TopBar";
 import ReaderStatus from "@/components/ReaderStatus";
 import TagStatus from "@/components/TagStatus";
 import TagContentPreview from "@/components/TagContentPreview";
@@ -272,6 +273,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[var(--background)] text-[var(--text-primary)]">
+      <TopBar />
       <div className="px-6 py-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <h1 className="font-pp-machina text-[24px] font-normal leading-[32px] tracking-[-0.006em] text-[var(--text-primary)]">
           Offline Cash
