@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
-import { AlertCircle, CheckCircle, FolderSearch, Loader2, ScanText, Upload } from "lucide-react";
+import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { listen, TauriEvent } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
+import { AlertCircle, FolderSearch, Loader2, ScanText } from "lucide-react";
 
 import PrivateAssetsGrid, { createMockPrivateCashVouchers, type PrivateCashVoucherTile } from "@/components/PrivateAssetsGrid";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useNtag216Json } from "@/hooks/useNtag216";
 import TopBar from "@/components/TopBar";
@@ -15,8 +15,6 @@ import TagContentPreview from "@/components/TagContentPreview";
 import WriteZone from "@/components/WriteZone";
 import OverwriteConfirmModal from "@/components/OverwriteConfirmModal";
 
-const JSON_MIME = "application/json";
-
 function prettyJson(raw: string): { pretty: string; error: string | null } {
   try {
     return { pretty: JSON.stringify(JSON.parse(raw), null, 2), error: null };
@@ -25,15 +23,49 @@ function prettyJson(raw: string): { pretty: string; error: string | null } {
   }
 }
 
+function buildVoucher(parsed: any, idSource?: string): PrivateCashVoucherTile {
+  const idFromSource = idSource
+    ? idSource.replace(/^.*[\\/]/, "").replace(/\.json$/i, "")
+    : undefined;
+
+  const voucher: PrivateCashVoucherTile = {
+    id: parsed.id || idFromSource || String(Date.now()),
+    voucherId: parsed.voucherId,
+    amount: parsed.amount,
+    recipient: parsed.recipient,
+    secret: parsed.secret,
+    salt: parsed.salt,
+    txSignature: parsed.txSignature,
+    createdAt: parsed.createdAt || new Date().toISOString(),
+  };
+
+  const required = [
+    voucher.voucherId,
+    voucher.amount,
+    voucher.recipient,
+    voucher.secret,
+    voucher.salt,
+    voucher.txSignature,
+    voucher.createdAt,
+  ];
+
+  if (required.some((field) => field === undefined || field === null)) {
+    throw new Error("Missing required voucher fields.");
+  }
+
+  return voucher;
+}
+
 function App() {
   const [jsonText, setJsonText] = useState('{"hello":"ntag216"}');
-  const [showStatusHistory, setShowStatusHistory] = useState(false);
 
   const [voucherTiles, setVoucherTiles] = useState<PrivateCashVoucherTile[]>(() => createMockPrivateCashVouchers());
   const [voucherLoading, setVoucherLoading] = useState(false);
   const [hasScannedVouchers, setHasScannedVouchers] = useState(false);
   const assetFileInputRef = useRef<HTMLInputElement>(null);
+  const assetDirectoryInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [isImportDragOver, setIsImportDragOver] = useState(false);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [stagedNote, setStagedNote] = useState<PrivateCashVoucherTile | null>(null);
   const [draggingNoteId, setDraggingNoteId] = useState<string | null>(null);
@@ -56,39 +88,87 @@ function App() {
     checkReader,
     readJson,
     writeJson,
-    status,
     statusHistory,
-    statusIsError,
     isBusy,
     isReading,
     isWriting,
     pushStatus,
   } = useNtag216Json();
 
-  const jsonSizing = useMemo(() => {
-    try {
-      const obj = JSON.parse(jsonText);
-      const minified = JSON.stringify(obj);
-      const payloadBytes = new TextEncoder().encode(minified).length;
-      const typeLen = JSON_MIME.length;
-      const payloadLenFieldBytes = payloadBytes <= 0xff ? 1 : 4;
-      const ndefLen = 1 + 1 + payloadLenFieldBytes + typeLen + payloadBytes;
-      const tlvHeaderBytes = ndefLen <= 0xfe ? 2 : 4;
-      const tlvLen = tlvHeaderBytes + ndefLen + 1;
-      const paddedLen = Math.ceil(tlvLen / 4) * 4;
-      const pages = paddedLen / 4;
-      const maxBytes = 872;
-      const fits = paddedLen <= maxBytes;
-      return { ok: true as const, minified, payloadBytes, ndefLen, tlvLen, paddedLen, pages, maxBytes, fits };
-    } catch (e) {
-      return { ok: false as const, error: String(e) };
-    }
-  }, [jsonText]);
-
   const busy = isBusy;
   const canRead = !busy;
   const canWrite = !busy && Boolean(jsonText.trim());
-  const writeDisabledReason = !jsonText.trim() ? "Add a JSON payload to write" : busy ? "Busy" : undefined;
+  const lastImportTsRef = useRef(0);
+  const IMPORT_DEBOUNCE_MS = 500;
+
+  const claimImportSlot = (hasFiles: boolean) => {
+    if (!hasFiles) return false;
+    const now = Date.now();
+    if (now - lastImportTsRef.current < IMPORT_DEBOUNCE_MS) {
+      return false;
+    }
+    lastImportTsRef.current = now;
+    return true;
+  };
+
+  const handleWindowDragOverReact = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsImportDragOver(true);
+  };
+
+  const handleWindowDragLeaveReact = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsImportDragOver(false);
+  };
+
+  const handleWindowDropReact = async (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsImportDragOver(false);
+    await handleDataTransferImport(event.dataTransfer);
+  };
+
+
+  useEffect(() => {
+    if (assetDirectoryInputRef.current) {
+      assetDirectoryInputRef.current.setAttribute("webkitdirectory", "true");
+      assetDirectoryInputRef.current.setAttribute("directory", "true");
+    }
+
+    const preventDefaultDragOver = (e: DragEvent | DragEvent<Element>) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    window.addEventListener("dragover", preventDefaultDragOver as unknown as EventListener);
+    let unlistenFileDrop: (() => void) | undefined;
+
+    // Subscribe to Tauri file-drop events to get filesystem paths when the File API is blocked.
+    listen(TauriEvent.DRAG_DROP, async (event) => {
+      const payload = event.payload as unknown;
+      const paths = Array.isArray(payload)
+        ? (payload as string[])
+        : (payload as { paths?: string[] })?.paths ?? [];
+      if (paths.length) {
+        await handleFilePathImport(paths);
+      }
+    })
+      .then((unlisten) => {
+        unlistenFileDrop = unlisten;
+      })
+      .catch(() => {
+        /* ignore */
+      });
+
+    return () => {
+      window.removeEventListener("dragover", preventDefaultDragOver as unknown as EventListener);
+      if (unlistenFileDrop) {
+        unlistenFileDrop();
+      }
+    };
+  }, []);
 
   async function handleReadJson() {
     if (!canRead) return;
@@ -106,31 +186,178 @@ function App() {
     }
   }
 
-  async function handleWriteJson() {
-    if (!canWrite) return;
-    await writeJson.mutateAsync({ json: jsonText });
+  async function getFileContent(file: File): Promise<string> {
+    try {
+      return await file.text();
+    } catch {
+      throw new Error("Unable to read file content from drop.");
+    }
+  }
+
+  async function loadVoucherFiles(files: File[]): Promise<PrivateCashVoucherTile[]> {
+    const loaded: PrivateCashVoucherTile[] = [];
+
+    for (const file of files) {
+      try {
+        const content = await getFileContent(file);
+      const parsed = JSON.parse(content);
+      loaded.push(buildVoucher(parsed, file.name));
+      } catch (err) {
+        pushStatus(`Skipping ${file.name}: ${String(err)}`);
+      }
+    }
+
+    return loaded;
+  }
+
+  async function handleFilePathImport(paths: string[]) {
+    const jsonPaths = paths.filter((p) => p.toLowerCase().endsWith(".json"));
+
+    if (jsonPaths.length === 0) {
+      pushStatus("Dropped items contained no JSON files.");
+      return;
+    }
+
+    if (!claimImportSlot(jsonPaths.length > 0)) return;
+    setVoucherLoading(true);
+    try {
+      const loaded: PrivateCashVoucherTile[] = [];
+      for (const path of jsonPaths) {
+        try {
+          const content = await invoke<string>("read_file_text", { path });
+        const parsed = JSON.parse(content);
+        loaded.push(buildVoucher(parsed, path));
+        } catch (err) {
+          pushStatus(`Skipping ${path}: ${String(err)}`);
+        }
+      }
+      setVoucherTiles((prev) => {
+        const existingIds = new Set(prev.map((v) => v.id));
+        const incoming = loaded.filter((v) => !existingIds.has(v.id));
+        return [...prev, ...incoming];
+      });
+      setHasScannedVouchers(true);
+      pushStatus(
+        loaded.length
+          ? `✓ Imported ${loaded.length} voucher file(s) from drop.`
+          : "No valid voucher JSON files in dropped items."
+      );
+    } catch (err) {
+      pushStatus(`Drop import failed: ${String(err)}`);
+    } finally {
+      setVoucherLoading(false);
+    }
+  }
+
+  async function handleDataTransferImport(dataTransfer: DataTransfer | null) {
+    if (!dataTransfer) return;
+    const files = Array.from(dataTransfer.files ?? []).filter((file) =>
+      file.name.toLowerCase().endsWith(".json")
+    );
+
+    if (files.length === 0) {
+      pushStatus("Drop JSON voucher files to import.");
+      return;
+    }
+
+    if (!claimImportSlot(files.length > 0)) return;
+    setVoucherLoading(true);
+    try {
+      const loaded = await loadVoucherFiles(files);
+      setVoucherTiles((prev) => {
+        const existingIds = new Set(prev.map((v) => v.id));
+        const incoming = loaded.filter((v) => !existingIds.has(v.id));
+        return [...prev, ...incoming];
+      });
+      setHasScannedVouchers(true);
+      pushStatus(
+        loaded.length
+          ? `✓ Imported ${loaded.length} voucher file(s) from drop.`
+          : "Dropped files did not contain valid voucher JSON."
+      );
+    } catch (err) {
+      pushStatus(`Drop import failed: ${String(err)}`);
+    } finally {
+      setVoucherLoading(false);
+    }
   }
 
   function handleLocateAssets() {
-    setVoucherLoading(true);
-    pushStatus("Scanning for voucher files…");
-    setTimeout(() => {
-      setVoucherTiles(createMockPrivateCashVouchers(Date.now()));
-      setVoucherLoading(false);
-      setHasScannedVouchers(true);
-      pushStatus("Loaded vouchers from mock folder.");
-    }, 600);
+    assetDirectoryInputRef.current?.click();
   }
 
-  function handleAssetFilesSelected(event: ChangeEvent<HTMLInputElement>) {
+  function handleImportDragOver(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer?.types.includes("Files")) {
+      setIsImportDragOver(true);
+    }
+  }
+
+  function handleImportDragLeave(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsImportDragOver(false);
+  }
+
+  async function handleImportDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsImportDragOver(false);
+
+    await handleDataTransferImport(event.dataTransfer);
+  }
+
+  async function handleAssetDirectorySelected(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []).filter((file) => file.name.toLowerCase().endsWith(".json"));
     setVoucherLoading(true);
-    const files = Array.from(event.target.files ?? []);
-    setTimeout(() => {
-      setVoucherTiles(createMockPrivateCashVouchers(Date.now()));
-      setVoucherLoading(false);
+    try {
+      if (files.length === 0) {
+        setVoucherTiles([]);
+        setHasScannedVouchers(true);
+        pushStatus(
+          "No voucher JSON files found or folder access was blocked. If Windows shows 'organization turned off access', try 'Choose files' or drag-and-drop individual JSONs instead."
+        );
+        return;
+      }
+
+      const loaded = await loadVoucherFiles(files);
+      setVoucherTiles(loaded);
       setHasScannedVouchers(true);
-      pushStatus(files.length ? `Loaded ${files.length} file(s) into vouchers.` : "No files selected.");
-    }, 400);
+      pushStatus(
+        loaded.length
+          ? `Loaded ${loaded.length} voucher file(s) from the selected folder.`
+          : "No voucher JSON files found in the selected folder."
+      );
+    } catch (err) {
+      pushStatus(`Folder scan failed: ${String(err)}`);
+    } finally {
+      setVoucherLoading(false);
+      event.target.value = "";
+    }
+  }
+
+  async function handleAssetFilesSelected(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []).filter((file) => file.name.toLowerCase().endsWith(".json"));
+    setVoucherLoading(true);
+    try {
+      if (files.length === 0) {
+        pushStatus(
+          "No files selected or access was blocked. If you saw a Windows access warning, try drag-and-drop or pick files from a different folder."
+        );
+        return;
+      }
+
+      const loaded = await loadVoucherFiles(files);
+      setVoucherTiles(loaded);
+      setHasScannedVouchers(true);
+      pushStatus(`Loaded ${loaded.length} file(s) into vouchers.`);
+    } catch (err) {
+      pushStatus(`Load failed: ${String(err)}`);
+    } finally {
+      setVoucherLoading(false);
+      event.target.value = "";
+    }
   }
 
   function handleClearAssets() {
@@ -272,7 +499,14 @@ function App() {
   }, [draggingNoteId]);
 
   return (
-    <div className="min-h-screen bg-[var(--background)] text-[var(--text-primary)]">
+    <div
+      className={`min-h-screen bg-[var(--background)] text-[var(--text-primary)] ${
+        isImportDragOver ? "outline outline-2 outline-[var(--brand-light-green)]/70 outline-offset-4" : ""
+      }`}
+      onDragOver={handleWindowDragOverReact}
+      onDragLeave={handleWindowDragLeaveReact}
+      onDrop={handleWindowDropReact}
+    >
       <TopBar />
       <div className="px-6 py-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <h1 className="font-pp-machina text-[24px] font-normal leading-[32px] tracking-[-0.006em] text-[var(--text-primary)]">
@@ -318,26 +552,6 @@ function App() {
               </Tooltip>
             </div>
           ) : null}
-          <Button
-            variant="greenTint"
-            onClick={handleReadJson}
-            className="gap-1.5 text-[var(--brand-green-50)] text-[12px] px-1 py-0.5 h-[40px] rounded-[12px]"
-            disabled={!canRead}
-            title={busy ? "Busy" : undefined}
-          >
-            {busy && isReading ? <Loader2 className="size-4 animate-spin" /> : <ScanText className="size-6" />}
-            {busy && isReading ? "Working…" : "Read"}
-          </Button>
-          <Button
-            variant="greenTint"
-            onClick={handleWriteJson}
-            className="gap-1.5 text-[var(--brand-green-50)] text-[12px] px-1 py-0.5 h-[40px] rounded-[12px]"
-            disabled={!canWrite}
-            title={writeDisabledReason}
-          >
-            {busy && !isReading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-6" />}
-            {busy && !isReading ? "Working…" : "Write"}
-          </Button>
         </div>
       </div>
 
@@ -357,7 +571,12 @@ function App() {
       <section 
         className="px-6 py-6 grid gap-6 lg:grid-cols-[2fr_1fr]"
       >
-        <div className="space-y-4">
+        <div
+          className={`space-y-4 rounded-xl transition-colors ${isImportDragOver ? "border border-[var(--brand-light-green)]/50 bg-[var(--brand-light-dark-green)]/30" : ""}`}
+          onDragOver={handleImportDragOver}
+          onDragLeave={handleImportDragLeave}
+          onDrop={handleImportDrop}
+        >
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <h3 className="text-[16px] font-semibold">Private assets</h3>
             <div className="flex items-center gap-2 flex-wrap">
@@ -399,6 +618,14 @@ function App() {
               >
                 Clear assets
             </Button>
+              <input
+                ref={assetDirectoryInputRef}
+                type="file"
+                accept="application/json,.json"
+                multiple
+                className="hidden"
+                onChange={handleAssetDirectorySelected}
+              />
               <input
                 ref={assetFileInputRef}
                 type="file"
@@ -506,24 +733,26 @@ function App() {
               }}
             />
 
-            <Button 
-              variant="greenTint" 
-              onClick={handleReadJson} 
-              disabled={!canRead}
-              className="w-full gap-1.5 text-[var(--brand-green-50)] text-[12px] h-[40px] rounded-[12px]"
-            >
-              {isReading ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  Reading...
-                </>
-              ) : (
-                <>
-                  <ScanText className="size-6" />
-                  Read
-                </>
-              )}
-            </Button>
+            <div className="grid gap-2">
+              <Button 
+                variant="greenTint" 
+                onClick={handleReadJson} 
+                disabled={!canRead}
+                className="w-full gap-1.5 text-[var(--brand-green-50)] text-[12px] h-[40px] rounded-[12px]"
+              >
+                {isReading ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Reading...
+                  </>
+                ) : (
+                  <>
+                    <ScanText className="size-6" />
+                    Read
+                  </>
+                )}
+              </Button>
+            </div>
 
             {isBusy && (
               <div className="rounded-lg border border-[var(--brand-light-green)]/35 bg-[var(--brand-light-dark-green)] px-3 py-2">
@@ -553,107 +782,6 @@ function App() {
             )}
           </CardContent>
         </Card>
-      </section>
-
-      <section className="px-6 pb-6 grid gap-6 lg:grid-cols-[1.4fr_1fr]">
-        <Card variant="darkSolidGrey" className="border border-[var(--brand-light-green)]/25">
-          <CardHeader>
-            <CardTitle className="text-[16px] font-normal">NFC JSON payload</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-              <div className="space-y-2">
-                <Label htmlFor="json">JSON payload</Label>
-                <Textarea
-                  id="json"
-                  value={jsonText}
-                  onChange={(e) => setJsonText(e.currentTarget.value)}
-                rows={10}
-                  className="rounded-xl border-[var(--brand-light-green)]/35 bg-[var(--wallet-card-grey)] font-mono text-sm leading-6 text-[var(--text-primary)] shadow-[0_0_0_1px_rgba(82,201,125,0.08)]"
-                />
-              </div>
-              {jsonSizing.ok ? (
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-lg border border-[var(--brand-light-green)]/25 bg-[var(--brand-light-dark-green)] px-4 py-3">
-                    <div className="text-xs text-[var(--text-tertiary)]">Minified</div>
-                    <div className="font-mono text-sm text-[var(--text-primary)]">{jsonSizing.payloadBytes} bytes</div>
-                  </div>
-                  <div className="rounded-lg border border-[var(--brand-light-green)]/25 bg-[var(--brand-light-dark-green)] px-4 py-3">
-                    <div className="text-xs text-[var(--text-tertiary)]">On-tag (TLV+pads)</div>
-                    <div className="font-mono text-sm text-[var(--text-primary)]">
-                      {jsonSizing.paddedLen}/{jsonSizing.maxBytes} bytes
-                    </div>
-                  </div>
-                  <div className="rounded-lg border border-[var(--brand-light-green)]/25 bg-[var(--brand-light-dark-green)] px-4 py-3">
-                    <div className="text-xs text-[var(--text-tertiary)]">Pages used</div>
-                    <div className="font-mono text-sm text-[var(--text-primary)]">{jsonSizing.pages}</div>
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                  JSON parse error: {jsonSizing.error}
-                </div>
-              )}
-          </CardContent>
-        </Card>
-
-        <Card variant="darkSolidGrey" className="border border-[var(--brand-light-green)]/25">
-          <CardHeader>
-            <CardTitle className="text-[16px] font-normal">Reader status</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="rounded-lg border border-[var(--brand-light-green)]/25 bg-[var(--brand-light-dark-green)] px-3 py-2 text-sm text-[var(--text-primary)]">
-              {readerLoading ? "Checking NFC reader…" : readerStatus || "Waiting for device scan…"}
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => void checkReader()} disabled={busy}>
-                Check reader
-              </Button>
-            </div>
-            {status ? (
-              <div
-                className={`rounded-md border px-3 py-3 text-xs transition-colors ${
-                  statusIsError
-                    ? "border-[var(--error-soft)]/40 bg-red-950/20 text-[var(--error-soft)]"
-                    : status.includes('✓')
-                    ? "border-[var(--brand-green)]/40 bg-[var(--brand-light-dark-green)]/30 text-[var(--brand-green-50)]"
-                    : "border-white/10 text-[var(--text-tertiary)]"
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-start gap-2">
-                    {statusIsError ? (
-                      <AlertCircle className="size-4 mt-0.5 flex-shrink-0" />
-                    ) : status.includes('✓') ? (
-                      <CheckCircle className="size-4 mt-0.5 flex-shrink-0 text-[var(--brand-green)]" />
-                    ) : isReading || isWriting ? (
-                      <Loader2 className="size-4 mt-0.5 flex-shrink-0 animate-spin" />
-                    ) : null}
-                    <p className="whitespace-pre-line text-left">{status}</p>
-                  </div>
-                  {statusHistory.length > 1 ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-auto px-2 text-[11px] text-[var(--brand-green-50)]"
-                      onClick={() => setShowStatusHistory((prev) => !prev)}
-                    >
-                      {showStatusHistory ? "Hide logs" : "Show logs"}
-                    </Button>
-                  ) : null}
-              </div>
-                {showStatusHistory ? (
-                  <div className="mt-3 max-h-40 space-y-1 overflow-y-auto rounded bg-black/20 px-3 py-2 text-[11px] text-[var(--text-tertiary)]/90">
-                    {statusHistory.map((entry, index) => (
-                      <p key={`${entry}-${index}`} className="whitespace-pre-line">
-                        {entry}
-                      </p>
-                    ))}
-                    </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </CardContent>
-                </Card>
       </section>
 
       <section className="px-6 pb-4 space-y-3">
