@@ -23,6 +23,39 @@ function prettyJson(raw: string): { pretty: string; error: string | null } {
   }
 }
 
+function buildVoucher(parsed: any, idSource?: string): PrivateCashVoucherTile {
+  const idFromSource = idSource
+    ? idSource.replace(/^.*[\\/]/, "").replace(/\.json$/i, "")
+    : undefined;
+
+  const voucher: PrivateCashVoucherTile = {
+    id: parsed.id || idFromSource || String(Date.now()),
+    voucherId: parsed.voucherId,
+    amount: parsed.amount,
+    recipient: parsed.recipient,
+    secret: parsed.secret,
+    salt: parsed.salt,
+    txSignature: parsed.txSignature,
+    createdAt: parsed.createdAt || new Date().toISOString(),
+  };
+
+  const required = [
+    voucher.voucherId,
+    voucher.amount,
+    voucher.recipient,
+    voucher.secret,
+    voucher.salt,
+    voucher.txSignature,
+    voucher.createdAt,
+  ];
+
+  if (required.some((field) => field === undefined || field === null)) {
+    throw new Error("Missing required voucher fields.");
+  }
+
+  return voucher;
+}
+
 function App() {
   const [jsonText, setJsonText] = useState('{"hello":"ntag216"}');
 
@@ -167,34 +200,8 @@ function App() {
     for (const file of files) {
       try {
         const content = await getFileContent(file);
-        const parsed = JSON.parse(content);
-
-        const voucher: PrivateCashVoucherTile = {
-          id: parsed.id || file.name?.replace(/\.json$/i, "") || String(Date.now()),
-          voucherId: parsed.voucherId,
-          amount: parsed.amount,
-          recipient: parsed.recipient,
-          secret: parsed.secret,
-          salt: parsed.salt,
-          txSignature: parsed.txSignature,
-          createdAt: parsed.createdAt || new Date().toISOString(),
-        };
-
-        const required = [
-          voucher.voucherId,
-          voucher.amount,
-          voucher.recipient,
-          voucher.secret,
-          voucher.salt,
-          voucher.txSignature,
-          voucher.createdAt,
-        ];
-
-        if (required.some((field) => field === undefined || field === null)) {
-          throw new Error("Missing required voucher fields.");
-        }
-
-        loaded.push(voucher);
+      const parsed = JSON.parse(content);
+      loaded.push(buildVoucher(parsed, file.name));
       } catch (err) {
         pushStatus(`Skipping ${file.name}: ${String(err)}`);
       }
@@ -218,30 +225,8 @@ function App() {
       for (const path of jsonPaths) {
         try {
           const content = await invoke<string>("read_file_text", { path });
-          const parsed = JSON.parse(content);
-          const voucher: PrivateCashVoucherTile = {
-            id: parsed.id || path.split(/[\\/]/).pop()?.replace(/\.json$/i, "") || String(Date.now()),
-            voucherId: parsed.voucherId,
-            amount: parsed.amount,
-            recipient: parsed.recipient,
-            secret: parsed.secret,
-            salt: parsed.salt,
-            txSignature: parsed.txSignature,
-            createdAt: parsed.createdAt || new Date().toISOString(),
-          };
-          const required = [
-            voucher.voucherId,
-            voucher.amount,
-            voucher.recipient,
-            voucher.secret,
-            voucher.salt,
-            voucher.txSignature,
-            voucher.createdAt,
-          ];
-          if (required.some((field) => field === undefined || field === null)) {
-            throw new Error("Missing required voucher fields.");
-          }
-          loaded.push(voucher);
+        const parsed = JSON.parse(content);
+        loaded.push(buildVoucher(parsed, path));
         } catch (err) {
           pushStatus(`Skipping ${path}: ${String(err)}`);
         }
