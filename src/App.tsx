@@ -1,19 +1,15 @@
 import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
 import { listen, TauriEvent } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { AlertCircle, FolderSearch, Loader2, ScanText } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 
-import PrivateAssetsGrid from "@/components/PrivateAssetsGrid";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useNtag216Json } from "@/hooks/useNtag216";
 import TopBar from "@/components/TopBar";
-import ReaderStatus from "@/components/ReaderStatus";
-import TagStatus from "@/components/TagStatus";
-import TagContentPreview from "@/components/TagContentPreview";
-import WriteZone from "@/components/WriteZone";
 import OverwriteConfirmModal from "@/components/OverwriteConfirmModal";
+import VoucherPanel from "@/components/offline-cash/VoucherPanel";
+import HardwarePanel from "@/components/offline-cash/HardwarePanel";
 import { createMockPrivateCashVouchers, type PrivateCashVoucherTile, buildVoucher } from "@/lib/voucher";
 import { prettyJson } from "@/lib/utils";
 import { IMPORT_DEBOUNCE_MS, NULLIFIER_INIT_DELAY_MS, PROTOCOL_INIT_DELAY_MS } from "@/lib/constants";
@@ -529,220 +525,92 @@ function App() {
         </div>
       </div>
 
-      <section 
-        className="px-6 py-6 grid gap-6 lg:grid-cols-[2fr_1fr]"
-      >
-        <div
-          className={`space-y-4 rounded-xl transition-colors ${isImportDragOver ? "border border-[var(--brand-light-green)]/50 bg-[var(--brand-light-dark-green)]/30" : ""}`}
-          onDragOver={handleImportDragOver}
-          onDragLeave={handleImportDragLeave}
-          onDrop={handleImportDrop}
-        >
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <h3 className="text-[16px] font-semibold">Private assets</h3>
-            <div className="flex items-center gap-2 flex-wrap">
-              <Button variant="outline" disabled={voucherLoading} onClick={handleLocateAssets} className="gap-1.5" expand>
-                {voucherLoading ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Loading
-                  </>
-                ) : (
-                  <>
-                    <FolderSearch className="size-4" />
-                    Locate assets
-                  </>
-                )}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={voucherLoading}
-                onClick={() => assetFileInputRef.current?.click()}
-                className="gap-1.5"
-              >
-                {voucherLoading ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Processing
-                  </>
-                ) : (
-                  "Choose files"
-                )}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={voucherLoading || voucherTiles.length === 0}
-                onClick={handleClearAssets}
-                className="gap-1.5 text-[var(--corange-300)] hover:text-[var(--corange-100)]"
-              >
-                Clear assets
-            </Button>
-              <input
-                ref={assetDirectoryInputRef}
-                type="file"
-                accept="application/json,.json"
-                multiple
-                className="hidden"
-                onChange={handleAssetDirectorySelected}
-              />
-              <input
-                ref={assetFileInputRef}
-                type="file"
-                accept="application/json,.json"
-                multiple
-                className="hidden"
-                onChange={handleAssetFilesSelected}
-              />
-            </div>
-          </div>
-          <PrivateAssetsGrid 
-            vouchers={voucherTiles} 
-            selectedNoteId={selectedNoteId}
-            onSelectNote={setSelectedNoteId}
-            onDragStart={(noteId) => {
-              setDraggingNoteId(noteId);
-            }}
-            onDragEnd={() => {
-              setTimeout(() => {
-                setDraggingNoteId(null);
-                setIsDragOver(false);
-              }, 100);
-            }}
-          />
-          {hasScannedVouchers && voucherTiles.length === 0 ? (
-            <p className="text-xs text-[var(--text-tertiary)]">
-              No voucher files were found in the selected folder. Add voucher JSON files and click Choose files.
-            </p>
-          ) : null}
-        </div>
-        <Card
-          variant="darkSolidGrey" 
-          className="border border-[var(--brand-light-green)]/25 min-h-[540px]"
-        >
-          <CardHeader>
-            <CardTitle className="text-[16px] font-normal">Hardware</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4 select-none">
-            <ReaderStatus
-              readerLoading={readerLoading}
-              readerError={readerError}
-              readerStatus={readerStatus}
-              onRefresh={() => void checkReader()}
-            />
-
-            {readJson.data && !readerError && (
-              <TagStatus tagData={readJson.data} />
-            )}
-
-            {!readerError && readJson.data?.ndef?.kind === "json" && readJson.data.ndef.json && (
-              <TagContentPreview
-                json={readJson.data.ndef.json}
-                busy={busy}
-                onCopy={() => void handleCopyTagNote()}
-                onSave={() => void handleSaveTagToComputer()}
-              />
-            )}
-
-            <WriteZone
-              stagedNote={stagedNote}
-              isDragOver={isDragOver}
-              isWriting={isWriting}
-              busy={busy}
-              isReading={isReading}
-              dropZoneRef={dropZoneRef}
-              onWrite={() => {
-                if (stagedNote) {
-                  void handleWriteNote(stagedNote);
+      <section className="px-6 py-6 grid gap-6 lg:grid-cols-[2fr_1fr]">
+        <VoucherPanel
+          vouchers={voucherTiles}
+          selectedNoteId={selectedNoteId}
+          voucherLoading={voucherLoading}
+          hasScannedVouchers={hasScannedVouchers}
+          isImportDragOver={isImportDragOver}
+          onImportDragOver={handleImportDragOver}
+          onImportDragLeave={handleImportDragLeave}
+          onImportDrop={handleImportDrop}
+          onLocateAssets={handleLocateAssets}
+          onChooseFiles={() => assetFileInputRef.current?.click()}
+          onClearAssets={handleClearAssets}
+          onSelectNote={setSelectedNoteId}
+          onDragStart={(noteId) => {
+            setDraggingNoteId(noteId);
+          }}
+          onDragEnd={() => {
+            setTimeout(() => {
+              setDraggingNoteId(null);
+              setIsDragOver(false);
+            }, 100);
+          }}
+          assetDirectoryInputRef={assetDirectoryInputRef}
+          assetFileInputRef={assetFileInputRef}
+          onAssetDirectorySelected={handleAssetDirectorySelected}
+          onAssetFilesSelected={handleAssetFilesSelected}
+        />
+        <HardwarePanel
+          readerLoading={readerLoading}
+          readerError={readerError}
+          readerStatus={readerStatus}
+          onRefresh={() => void checkReader()}
+          tagData={readJson.data}
+          busy={busy}
+          isReading={isReading}
+          isWriting={isWriting}
+          onCopyTagNote={() => void handleCopyTagNote()}
+          onSaveTagToComputer={() => void handleSaveTagToComputer()}
+          onReadJson={handleReadJson}
+          canRead={canRead}
+          stagedNote={stagedNote}
+          isDragOver={isDragOver}
+          dropZoneRef={dropZoneRef}
+          onWrite={() => {
+            if (stagedNote) {
+              void handleWriteNote(stagedNote);
+            }
+          }}
+          onClear={() => {
+            setStagedNote(null);
+            setSelectedNoteId(null);
+            pushStatus("Cleared staged note.");
+          }}
+          onMouseEnter={() => {
+            if (draggingNoteId) {
+              setIsDragOver(true);
+            }
+          }}
+          onMouseMove={() => {
+            if (draggingNoteId && !isDragOver) {
+              setIsDragOver(true);
+            }
+          }}
+          onMouseLeave={() => {
+            setIsDragOver(false);
+          }}
+          onMouseUp={() => {
+            if (draggingNoteId) {
+              const note = voucherTiles.find((v) => v.id === draggingNoteId);
+              if (note) {
+                if (readJson.data && !readJson.data.is_blank && readJson.data.ndef) {
+                  setPendingNote(note);
+                  setShowOverwriteModal(true);
+                } else {
+                  setStagedNote(note);
+                  setSelectedNoteId(note.id);
+                  pushStatus(`✓ Note ready. Click "Write to Tag" to write to the physical tag.`);
                 }
-              }}
-              onClear={() => {
-                setStagedNote(null);
-                setSelectedNoteId(null);
-                pushStatus("Cleared staged note.");
-              }}
-              onMouseEnter={() => {
-                if (draggingNoteId) {
-                  setIsDragOver(true);
-                }
-              }}
-              onMouseMove={() => {
-                if (draggingNoteId && !isDragOver) {
-                  setIsDragOver(true);
-                }
-              }}
-              onMouseLeave={() => {
-                setIsDragOver(false);
-              }}
-              onMouseUp={() => {
-                if (draggingNoteId) {
-                  const note = voucherTiles.find((v) => v.id === draggingNoteId);
-                  if (note) {
-                    if (readJson.data && !readJson.data.is_blank && readJson.data.ndef) {
-                      setPendingNote(note);
-                      setShowOverwriteModal(true);
-                    } else {
-                      setStagedNote(note);
-                      setSelectedNoteId(note.id);
-                      pushStatus(`✓ Note ready. Click "Write to Tag" to write to the physical tag.`);
-                    }
-                  }
-                  setDraggingNoteId(null);
-                }
-                setIsDragOver(false);
-              }}
-            />
-
-            <div className="grid gap-2">
-              <Button 
-                variant="greenTint" 
-                onClick={handleReadJson} 
-                disabled={!canRead}
-                className="w-full gap-1.5 text-[var(--brand-green-50)] text-[12px] h-[40px] rounded-[12px]"
-              >
-                {isReading ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Reading...
-                  </>
-                ) : (
-                  <>
-                    <ScanText className="size-6" />
-                    Read
-                  </>
-                )}
-              </Button>
-            </div>
-
-            {isBusy && (
-              <div className="rounded-lg border border-[var(--brand-light-green)]/35 bg-[var(--brand-light-dark-green)] px-3 py-2">
-                <div className="flex items-center gap-2 text-sm">
-                  <Loader2 className="size-4 animate-spin text-[var(--brand-green-50)]" />
-                  <span className="text-[var(--text-primary)]">
-                    {isReading ? "Reading tag..." : "Writing tag..."}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {statusHistory.length > 0 && (
-              <div className="space-y-2">
-                <div className="text-xs uppercase tracking-[0.14em] text-[var(--text-tertiary)]">Recent operations</div>
-                <div className="rounded-lg border border-[var(--brand-light-green)]/15 bg-[var(--brand-light-dark-green)]/30 px-3 py-2 space-y-1 max-h-32 overflow-y-auto">
-                  {statusHistory.slice(-5).reverse().map((entry, index) => (
-                    <div 
-                      key={`${entry}-${index}`} 
-                      className="text-xs text-[var(--text-tertiary)] whitespace-pre-line"
-                    >
-                      {entry}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+              }
+              setDraggingNoteId(null);
+            }
+            setIsDragOver(false);
+          }}
+          statusHistory={statusHistory}
+        />
       </section>
 
       <section className="px-6 pb-4 space-y-3">
