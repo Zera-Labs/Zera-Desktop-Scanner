@@ -39,7 +39,6 @@ function App() {
   const [walletMissingZera] = useState(false);
   const [protocolInitialized, setProtocolInitialized] = useState(true);
   const [nullifierSetInitialized, setNullifierSetInitialized] = useState(true);
-  const [zeraPrice] = useState<number | null>(1.234567);
   const [loading, setLoading] = useState(false);
 
   const {
@@ -684,11 +683,6 @@ function App() {
               </Button>
             </div>
         ) : null}
-        {zeraPrice ? (
-          <div className="text-xs text-[var(--text-tertiary)]">
-            Current ZERA price: <span className="text-[var(--brand-green-50)]">${zeraPrice.toFixed(6)}</span>
-        </div>
-      ) : null}
       </section>
 
       <OverwriteConfirmModal
