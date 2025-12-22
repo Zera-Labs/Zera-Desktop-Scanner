@@ -1,25 +1,25 @@
 import { useMemo } from "react";
+import type { CSSProperties } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Minus, Square, X } from "lucide-react";
-import logo from "@/assets/zeralabs-logo-192x192.png";
 
 function TopBar() {
   const appWindow = useMemo(() => getCurrentWindow(), []);
+  const dragRegionStyle: CSSProperties & { WebkitAppRegion?: string } = {
+    WebkitAppRegion: "drag",
+  };
 
   return (
     <header
       className="sticky top-0 z-20 flex h-12 items-center justify-between border-b border-white/10 bg-[var(--background)]/90 px-4 backdrop-blur"
       data-tauri-drag-region
-      style={{ WebkitAppRegion: "drag" }}
+      style={dragRegionStyle}
       onDoubleClick={() => void appWindow.toggleMaximize()}
     >
       <div className="flex min-w-0 select-none items-center gap-2">
-        <img
-          src={logo}
-          alt="Zeralabs logo"
-          className="h-7 w-7 rounded-md border border-[var(--brand-light-green)]/30 bg-[var(--brand-green)]/10 object-contain"
-          draggable={false}
-        />
+        <div className="grid h-8 w-8 place-items-center rounded-lg border border-[var(--brand-light-green)]/30 bg-[var(--brand-green)]/15 text-sm font-semibold text-[var(--brand-green-50)]">
+          Z
+        </div>
         <div className="truncate">
           <div className="text-sm font-semibold leading-tight text-[var(--text-primary)]">Offline Cash</div>
           <div className="text-[11px] leading-tight text-[var(--text-tertiary)]">desk_tauri</div>
