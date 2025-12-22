@@ -244,7 +244,11 @@ fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, Ntag216Error> {
 
 async fn run_pm3(port: &str, cmd: &str, timeout_ms: u64) -> Result<String, Ntag216Error> {
     let port = port.trim();
-    dlog!("run_pm3: cmd='{}' timeout_ms={}", trunc(cmd, 200), timeout_ms);
+    dlog!(
+        "run_pm3: cmd='{}' timeout_ms={}",
+        trunc(cmd, 200),
+        timeout_ms
+    );
     let resolved_port = if port.is_empty() {
         crate::serial::auto_detect_proxmark_port()
             .map_err(|e| Ntag216Error::InvalidArg(format!("auto-detect proxmark port failed: {e}")))?
@@ -305,35 +309,34 @@ async fn run_pm3(port: &str, cmd: &str, timeout_ms: u64) -> Result<String, Ntag2
         command.args(args);
         command.kill_on_drop(true);
 
-        let output = match tokio::time::timeout(Duration::from_millis(timeout_ms), command.output())
-            .await
-        {
-            Ok(res) => match res {
-                Ok(out) => out,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    last_not_found = last_not_found && true;
-                    continue;
-                }
-                Err(e) => {
-                    last_not_found = false;
-                    if bin == "proxmark3" {
-                        proxmark3_available = true;
+        let output =
+            match tokio::time::timeout(Duration::from_millis(timeout_ms), command.output()).await {
+                Ok(res) => match res {
+                    Ok(out) => out,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        last_not_found = last_not_found && true;
+                        continue;
                     }
-                    last_err = Some(Ntag216Error::CommandFailed {
-                        cmd: format!("{bin} {}", cmd),
-                        exit_code: None,
-                        output: format!("spawn error: {e}"),
-                    });
-                    continue;
+                    Err(e) => {
+                        last_not_found = false;
+                        if bin == "proxmark3" {
+                            proxmark3_available = true;
+                        }
+                        last_err = Some(Ntag216Error::CommandFailed {
+                            cmd: format!("{bin} {}", cmd),
+                            exit_code: None,
+                            output: format!("spawn error: {e}"),
+                        });
+                        continue;
+                    }
+                },
+                Err(_) => {
+                    return Err(Ntag216Error::Timeout {
+                        cmd: cmd.to_string(),
+                        timeout_ms,
+                    })
                 }
-            },
-            Err(_) => {
-                return Err(Ntag216Error::Timeout {
-                    cmd: cmd.to_string(),
-                    timeout_ms,
-                })
-            }
-        };
+            };
 
         if bin == "proxmark3" {
             proxmark3_available = true;
@@ -385,8 +388,7 @@ async fn run_pm3(port: &str, cmd: &str, timeout_ms: u64) -> Result<String, Ntag2
 
 fn parse_uid(output: &str) -> Option<String> {
     // Example: "UID: 04 9A 7F 5F B6 2A 81"
-    let re = Regex::new(r"(?i)\buid\b[^0-9a-f]*((?:[0-9a-f]{2}[\s:]+){6,}[0-9a-f]{2})")
-        .ok()?;
+    let re = Regex::new(r"(?i)\buid\b[^0-9a-f]*((?:[0-9a-f]{2}[\s:]+){6,}[0-9a-f]{2})").ok()?;
     let caps = re.captures(output)?;
     let raw = caps.get(1)?.as_str();
     let bytes: Vec<u8> = raw
@@ -446,7 +448,9 @@ fn encode_ndef_uri_record(uri: &str) -> Result<Vec<u8>, Ntag216Error> {
 
 fn encode_ndef_mime_record(mime_type: &str, payload: &[u8]) -> Result<Vec<u8>, Ntag216Error> {
     if mime_type.is_empty() {
-        return Err(Ntag216Error::InvalidArg("mime_type must not be empty".into()));
+        return Err(Ntag216Error::InvalidArg(
+            "mime_type must not be empty".into(),
+        ));
     }
     encode_ndef_record(0x02, mime_type.as_bytes(), payload)
 }
@@ -467,7 +471,8 @@ fn encode_ndef_record(tnf: u8, type_bytes: &[u8], payload: &[u8]) -> Result<Vec<
         | if sr { 0x10u8 } else { 0x00u8 } // SR
         | (tnf & 0x07);
 
-    let mut out = Vec::with_capacity(1 + 1 + (if sr { 1 } else { 4 }) + type_bytes.len() + payload.len());
+    let mut out =
+        Vec::with_capacity(1 + 1 + (if sr { 1 } else { 4 }) + type_bytes.len() + payload.len());
     out.push(header);
     out.push(type_bytes.len() as u8);
     if sr {
@@ -500,9 +505,7 @@ fn encode_ndef_tlv(ndef_message: &[u8]) -> Result<Vec<u8>, Ntag216Error> {
         out.push(0xFE);
         Ok(out)
     } else {
-        Err(Ntag216Error::InvalidArg(
-            "ndef message too large".into(),
-        ))
+        Err(Ntag216Error::InvalidArg("ndef message too large".into()))
     }
 }
 
@@ -984,7 +987,9 @@ fn decode_ndef_message(message: &[u8]) -> Option<NdefSummary> {
     })
 }
 
-async fn read_ndef_best_effort(port: &str) -> Result<(Option<String>, bool, Option<NdefSummary>), Ntag216Error> {
+async fn read_ndef_best_effort(
+    port: &str,
+) -> Result<(Option<String>, bool, Option<NdefSummary>), Ntag216Error> {
     let uid = read_uid(port).await.ok();
 
     // Fast path: try dump and parse pages 4.. until we can parse NDEF TLV.
@@ -1001,7 +1006,8 @@ async fn read_ndef_best_effort(port: &str) -> Result<(Option<String>, bool, Opti
     }
 
     // Fallback: read pages 4..20 and see if we can determine NDEF length.
-    let initial_pages = read_pages_range(port, NTAG216_FIRST_USER_PAGE, NTAG216_FIRST_USER_PAGE + 16).await?;
+    let initial_pages =
+        read_pages_range(port, NTAG216_FIRST_USER_PAGE, NTAG216_FIRST_USER_PAGE + 16).await?;
     let mut msg_opt = parse_ndef_from_pages(&initial_pages)?;
     if msg_opt.is_none() {
         // Could be longer than what we read; try to locate NDEF TLV and length.
@@ -1071,7 +1077,11 @@ pub async fn read_ntag216(port: String) -> CmdResult<Ntag216ReadResult> {
     let (uid, is_blank, ndef) = read_ndef_best_effort(&port)
         .await
         .map_err(|e| e.to_string())?;
-    Ok(Ntag216ReadResult { uid, is_blank, ndef })
+    Ok(Ntag216ReadResult {
+        uid,
+        is_blank,
+        ndef,
+    })
 }
 
 #[tauri::command]
@@ -1096,8 +1106,7 @@ pub async fn write_ntag216_text(
         });
     }
 
-    let msg = encode_ndef_text_record(&text, "en")
-        .map_err(|e| e.to_string())?;
+    let msg = encode_ndef_text_record(&text, "en").map_err(|e| e.to_string())?;
     let image = build_ntag216_ndef_tlv_image(&msg).map_err(|e| e.to_string())?;
     write_pages_bulk(&port, NTAG216_FIRST_USER_PAGE, &image)
         .await
@@ -1169,10 +1178,10 @@ pub async fn write_ntag216_json(
 
     // Validate + minify JSON to maximize tag capacity.
     dlog!("write_ntag216_json: input_json_len={}", json.len());
-    let value: serde_json::Value =
-        serde_json::from_str(&json).map_err(|e| Ntag216Error::InvalidArg(format!("invalid json: {e}")).to_string())?;
-    let minified =
-        serde_json::to_string(&value).map_err(|e| Ntag216Error::InvalidArg(format!("invalid json: {e}")).to_string())?;
+    let value: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|e| Ntag216Error::InvalidArg(format!("invalid json: {e}")).to_string())?;
+    let minified = serde_json::to_string(&value)
+        .map_err(|e| Ntag216Error::InvalidArg(format!("invalid json: {e}")).to_string())?;
     dlog!(
         "write_ntag216_json: minified_len={} preview='{}'",
         minified.len(),
@@ -1181,7 +1190,11 @@ pub async fn write_ntag216_json(
 
     let msg = encode_ndef_mime_record("application/json", minified.as_bytes())
         .map_err(|e| e.to_string())?;
-    dlog!("write_ntag216_json: ndef_message_len={} hex='{}'", msg.len(), hex_preview(&msg, 32));
+    dlog!(
+        "write_ntag216_json: ndef_message_len={} hex='{}'",
+        msg.len(),
+        hex_preview(&msg, 32)
+    );
     let image = build_ntag216_ndef_tlv_image(&msg).map_err(|e| e.to_string())?;
     write_pages_bulk(&port, NTAG216_FIRST_USER_PAGE, &image)
         .await
@@ -1216,11 +1229,17 @@ pub async fn write_ntag216_json(
                     }
                 }
                 Some(other) => {
-                    dlog!("write_ntag216_json: verify: unexpected kind={:?}", other.kind);
+                    dlog!(
+                        "write_ntag216_json: verify: unexpected kind={:?}",
+                        other.kind
+                    );
                     return Err("write verification failed: tag does not contain application/json after write (see Rust logs)".to_string());
                 }
                 None => {
-                    return Err("write verification failed: no NDEF found after write (see Rust logs)".to_string());
+                    return Err(
+                        "write verification failed: no NDEF found after write (see Rust logs)"
+                            .to_string(),
+                    );
                 }
             }
         }
@@ -1245,9 +1264,9 @@ pub async fn read_ntag216_json(port: String) -> CmdResult<String> {
         .map_err(|e| e.to_string())?;
     match ndef {
         Some(summary) if matches!(summary.kind, NdefKind::Json) => {
-            let json = summary
-                .json
-                .ok_or_else(|| "json record found but payload was not decodable as utf-8".to_string())?;
+            let json = summary.json.ok_or_else(|| {
+                "json record found but payload was not decodable as utf-8".to_string()
+            })?;
             dlog!(
                 "read_ntag216_json: decoded_json_len={} preview='{}'",
                 json.len(),
@@ -1298,8 +1317,7 @@ pub async fn write_ntag216_raw(
         ))
         .to_string());
     }
-    let max_bytes =
-        ((NTAG216_LAST_USER_PAGE - start_page + 1) as usize) * 4;
+    let max_bytes = ((NTAG216_LAST_USER_PAGE - start_page + 1) as usize) * 4;
     if data.len() > max_bytes {
         return Err(Ntag216Error::InvalidArg(format!(
             "data too large for available pages ({} > {})",
@@ -1631,13 +1649,10 @@ pub async fn clone_ntag216_to_n_tags(
         .await
         .map_err(|e| e.to_string())?;
     let source_ndef = source_ndef.ok_or_else(|| {
-        Ntag216Error::InvalidArg(
-            "source tag has no readable NDEF message to clone".into(),
-        )
-        .to_string()
+        Ntag216Error::InvalidArg("source tag has no readable NDEF message to clone".into())
+            .to_string()
     })?;
-    let source_bytes = hex_to_bytes(&source_ndef.message_hex)
-        .map_err(|e| e.to_string())?;
+    let source_bytes = hex_to_bytes(&source_ndef.message_hex).map_err(|e| e.to_string())?;
     let image = build_ntag216_ndef_tlv_image(&source_bytes).map_err(|e| e.to_string())?;
 
     let total = count;
@@ -1828,10 +1843,11 @@ pub async fn clone_ntag216_to_n_tags(
         );
 
         // Write prepared image.
-        let write_failed: Option<String> = match write_pages_bulk(&port, NTAG216_FIRST_USER_PAGE, &image).await {
-            Ok(_) => None,
-            Err(e) => Some(e.to_string()),
-        };
+        let write_failed: Option<String> =
+            match write_pages_bulk(&port, NTAG216_FIRST_USER_PAGE, &image).await {
+                Ok(_) => None,
+                Err(e) => Some(e.to_string()),
+            };
 
         if let Some(err) = write_failed {
             let _ = app.emit(
@@ -1897,5 +1913,3 @@ pub async fn clone_ntag216_to_n_tags(
         results,
     })
 }
-
-

@@ -115,9 +115,3 @@ pub fn auto_detect_proxmark_port() -> Result<Option<String>, String> {
 
     Ok(best.map(|(_, name)| name))
 }
-
-
-
-
-
-
