@@ -26,7 +26,7 @@ export default function TagStatus({ tagData }: TagStatusProps) {
           <div className="flex items-center justify-between">
             <span className="text-[var(--text-tertiary)]">Status:</span>
             <span className={tagData.is_blank ? "text-yellow-400" : "text-[var(--brand-green-50)]"}>
-              {tagData.is_blank ? "📭 Blank" : "📬 Has content"}
+              {tagData.is_blank ? "Blank" : "Has content"}
             </span>
           </div>
           {tagData.ndef && !tagData.is_blank && (

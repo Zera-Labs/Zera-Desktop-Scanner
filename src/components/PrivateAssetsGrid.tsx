@@ -9,11 +9,12 @@ type PrivateAssetsGridProps = {
   vouchers?: PrivateCashVoucherTile[]
   selectedNoteId?: string | null
   onSelectNote?: (id: string) => void
+  onViewDetails?: (id: string) => void
   onDragStart?: (noteId: string) => void
   onDragEnd?: () => void
 }
 
-export default function PrivateAssetsGrid({ vouchers, selectedNoteId, onSelectNote, onDragStart, onDragEnd }: PrivateAssetsGridProps) {
+export default function PrivateAssetsGrid({ vouchers, selectedNoteId, onSelectNote, onViewDetails, onDragStart, onDragEnd }: PrivateAssetsGridProps) {
   const initialTiles = React.useMemo<PrivateCashVoucherTile[]>(() => vouchers ?? createMockPrivateCashVouchers(), [vouchers])
 
   const [tiles, setTiles] = React.useState(initialTiles)
@@ -180,6 +181,7 @@ export default function PrivateAssetsGrid({ vouchers, selectedNoteId, onSelectNo
                 valueUsd={t.amount}
                 txSignature={t.txSignature}
                 createdAt={t.createdAt}
+                onClickDetails={() => onViewDetails?.(t.id)}
               />
               {hoverIndex === index ? (
                 <div className="pointer-events-none absolute inset-0 rounded-[22px] ring-2 ring-[var(--brand-light-green)]/80 shadow-[0_0_8px_0_#52C97D40]" />

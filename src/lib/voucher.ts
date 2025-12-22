@@ -1,3 +1,11 @@
+export interface HistoryEvent {
+  operation: 'read' | 'write';
+  timestamp: string;
+  tagUid?: string | null;
+  success: boolean;
+  error?: string;
+}
+
 export interface PrivateCashVoucher {
   voucherId: string;
   amount: number;
@@ -8,7 +16,14 @@ export interface PrivateCashVoucher {
   createdAt: string;
 }
 
-export type PrivateCashVoucherTile = PrivateCashVoucher & { id: string };
+export type PrivateCashVoucherTile = PrivateCashVoucher & { 
+  id: string;
+  history?: HistoryEvent[];
+  lastReadAt?: string;
+  lastWrittenAt?: string;
+  readCount?: number;
+  writeCount?: number;
+};
 
 /**
  * Normalize and validate a voucher JSON payload into a voucher tile.

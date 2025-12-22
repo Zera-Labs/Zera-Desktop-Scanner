@@ -13,6 +13,7 @@ type PrivateAssetCardProps = {
   txSignature: string
   createdAt: string | Date
   className?: string
+  onClickDetails?: () => void
 }
 
 function formatUsdCompact(value: number): { whole: string; fraction: string } {
@@ -61,6 +62,7 @@ export default function PrivateAssetCard({
   txSignature,
   createdAt,
   className,
+  onClickDetails,
 }: PrivateAssetCardProps) {
   const createdDate = React.useMemo(() => new Date(createdAt), [createdAt])
   const ageMinutes = React.useMemo(() => {
@@ -136,7 +138,19 @@ export default function PrivateAssetCard({
       </div>
 
       {/* Address + chain badge */}
-      <div className={cn('mt-auto flex items-center text-[var(--text-primary)]/70', isStale && 'opacity-50')}>
+      <div 
+        className={cn(
+          'mt-auto flex items-center text-[var(--text-primary)]/70 rounded-md px-2 py-1 -mx-2 -mb-1 transition-colors',
+          isStale && 'opacity-50',
+          onClickDetails && 'cursor-pointer hover:bg-white/5 hover:text-[var(--text-primary)] active:bg-white/10'
+        )}
+        onClick={(e) => {
+          if (onClickDetails) {
+            e.stopPropagation();
+            onClickDetails();
+          }
+        }}
+      >
         <span className="font-body font-normal text-[16px] leading-4 tracking-[0] tabular-nums overflow-hidden text-ellipsis whitespace-nowrap">
           {txSignature}
         </span>

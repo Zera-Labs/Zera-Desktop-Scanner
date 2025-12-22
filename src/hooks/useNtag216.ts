@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 
 const DEMO_MODE = true;
@@ -35,16 +35,17 @@ type WriteJsonInput = {
 };
 
 export function useNtag216Json() {
+  const queryClient = useQueryClient();
   const [status, setStatus] = useState("");
   const [statusHistory, setStatusHistory] = useState<string[]>([]);
   const [lastRead, setLastRead] = useState<Ntag216ReadResult | null>(null);
-  const [demoTagContent, setDemoTagContent] = useState<string | null>(null);
 
   const pushStatus = useCallback((message: string) => {
     setStatus(message);
     if (!message) return;
     setStatusHistory((prev) => [...prev.slice(-9), message]);
   }, []);
+  
   const readerQuery = useQuery<string>({
     queryKey: ["ntag216", "reader-status"],
     queryFn: () => {
@@ -63,11 +64,12 @@ export function useNtag216Json() {
     mutationFn: async (options) => {
       if (DEMO_MODE) {
         await new Promise(resolve => setTimeout(resolve, 800));
-    
-        const currentContent = options?.overrideContent || demoTagContent || JSON.stringify({
+        
+        const cachedContent = queryClient.getQueryData<string | null>(["ntag216", "demo-tag-content"]);
+        const currentContent = options?.overrideContent || cachedContent || JSON.stringify({
           id: "demo-1",
           voucherId: "0x74cccbb7db5be82b7c3d2d36e2cddb25649bd217",
-          amount: 99.99,
+          amount: 211111111199.99,
           recipient: "9Y6Aftit2gGPgY6H2DaDH1qnXE6qVhZ6kTpsuRWpuQXy",
           secret: "0xcb61b3870d94bef96de22653a3fa20b9e8b386b9",
           salt: "0x1daf0ee216260d49503ea68acb2b45949db4f749",
@@ -75,7 +77,7 @@ export function useNtag216Json() {
           createdAt: new Date().toISOString(),
         });
         
-        const hasContent = options?.overrideContent || demoTagContent;
+        const hasContent = options?.overrideContent || cachedContent;
         
         return {
           uid: "04:AB:CD:EF:12:34:56",
@@ -86,7 +88,7 @@ export function useNtag216Json() {
           } : null
         };
       }
-      return invoke<Ntag216ReadResult>("read_ntag216_json_desktop");
+      return invoke<Ntag216ReadResult>("read_ntag216_desktop");
     },
     onMutate: () => pushStatus("Reading… place tag on NFC reader"),
     onSuccess: (res: Ntag216ReadResult) => {
@@ -108,7 +110,7 @@ export function useNtag216Json() {
           uid: "04:AB:CD:EF:12:34:56",
           ok: true,
           skipped: false,
-          json,
+          error: null,
         };
       }
       return invoke<WriteResult>("write_ntag216_json_desktop", {
@@ -116,14 +118,18 @@ export function useNtag216Json() {
         options: { existing_tag_behavior: "overwrite" },
       });
     },
-    onMutate: () => pushStatus("Writing… place tag on NFC reader"),
+    onMutate: () => {
+      pushStatus("Writing… place tag on NFC reader");
+    },
     onSuccess: (_result, variables) => {
       pushStatus("Wrote JSON to tag.");
+      
       if (DEMO_MODE) {
-        setDemoTagContent(variables.json);
-        
-        void readMutation.mutate({ overrideContent: variables.json });
+
+        queryClient.setQueryData(["ntag216", "demo-tag-content"], variables.json);
       }
+      
+      void readMutation.mutate();
     },
     onError: (err: unknown) => {
       pushStatus(`Error: ${String(err)}`);

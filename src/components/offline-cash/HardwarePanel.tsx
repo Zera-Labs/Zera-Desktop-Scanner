@@ -18,7 +18,6 @@ type HardwarePanelProps = {
   busy: boolean;
   isReading: boolean;
   isWriting: boolean;
-  onCopyTagNote: () => void;
   onSaveTagToComputer: () => void;
   onReadJson: () => void;
   canRead: boolean;
@@ -43,7 +42,6 @@ export default function HardwarePanel({
   busy,
   isReading,
   isWriting,
-  onCopyTagNote,
   onSaveTagToComputer,
   onReadJson,
   canRead,
@@ -67,15 +65,13 @@ export default function HardwarePanel({
         <ReaderStatus
           readerLoading={readerLoading}
           readerError={readerError}
-          readerStatus={readerStatus}
+          readerStatus={readerStatus ?? undefined}
           onRefresh={onRefresh}
         />
 
         {tagData && !readerError && <TagStatus tagData={tagData} />}
 
-        {!readerError && tagData?.ndef?.kind === "json" && tagData.ndef.json && (
-          <TagContentPreview json={tagData.ndef.json} busy={busy} onCopy={onCopyTagNote} onSave={onSaveTagToComputer} />
-        )}
+
 
         <WriteZone
           stagedNote={stagedNote}
@@ -91,26 +87,21 @@ export default function HardwarePanel({
           onMouseLeave={onMouseLeave}
           onMouseUp={onMouseUp}
         />
-
+        {!readerError && tagData?.ndef?.kind === "json" && tagData.ndef.json && (
+          <TagContentPreview json={tagData.ndef.json} busy={busy} onSave={onSaveTagToComputer} />
+        )}
         <div className="grid gap-2">
-          <Button
-            variant="greenTint"
-            onClick={onReadJson}
-            disabled={!canRead}
-            className="w-full gap-1.5 text-[var(--brand-green-50)] text-[12px] h-[40px] rounded-[12px]"
-          >
-            {isReading ? (
-              <>
-                <Loader2 className="size-4 animate-spin" />
-                Reading...
-              </>
-            ) : (
-              <>
-                <ScanText className="size-6" />
-                Read
-              </>
-            )}
-          </Button>
+          {!isReading && (
+            <Button
+              variant="greenTint"
+              onClick={onReadJson}
+              disabled={!canRead}
+              className="w-full gap-1.5 text-[var(--brand-green-50)] text-[12px] h-[40px] rounded-[12px]"
+            >
+              <ScanText className="size-6" />
+              Read
+            </Button>
+          )}
         </div>
 
         {busy && (
@@ -127,7 +118,10 @@ export default function HardwarePanel({
             <div className="text-xs uppercase tracking-[0.14em] text-[var(--text-tertiary)]">Recent operations</div>
             <div className="rounded-lg border border-[var(--brand-light-green)]/15 bg-[var(--brand-light-dark-green)]/30 px-3 py-2 space-y-1 max-h-32 overflow-y-auto">
               {statusHistory.slice(-5).reverse().map((entry, index) => (
-                <div key={`${entry}-${index}`} className="text-xs text-[var(--text-tertiary)] whitespace-pre-line">
+                <div 
+                  key={`${entry}-${index}`} 
+                  className={`text-xs whitespace-pre-line ${index === 0 ? 'text-[var(--brand-green)]' : 'text-[var(--text-tertiary)]'}`}
+                >
                   {entry}
                 </div>
               ))}
