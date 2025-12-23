@@ -48,6 +48,7 @@ function App() {
     checkReader,
     readJson,
     writeJson,
+    status,
     statusHistory,
     isBusy,
     isReading,
@@ -608,6 +609,7 @@ function App() {
           busy={busy}
           isReading={isReading}
           isWriting={isWriting}
+          status={status}
           onSaveTagToComputer={() => void handleSaveTagToComputer()}
           onReadJson={handleReadJson}
           canRead={canRead}

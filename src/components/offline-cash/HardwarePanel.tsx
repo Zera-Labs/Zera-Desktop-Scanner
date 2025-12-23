@@ -18,6 +18,7 @@ type HardwarePanelProps = {
   busy: boolean;
   isReading: boolean;
   isWriting: boolean;
+  status: string;
   onSaveTagToComputer: () => void;
   onReadJson: () => void;
   canRead: boolean;
@@ -42,6 +43,7 @@ export default function HardwarePanel({
   busy,
   isReading,
   isWriting,
+  status,
   onSaveTagToComputer,
   onReadJson,
   canRead,
@@ -104,11 +106,11 @@ export default function HardwarePanel({
           )}
         </div>
 
-        {busy && (
+        {busy && status && (
           <div className="rounded-lg border border-[var(--brand-light-green)]/35 bg-[var(--brand-light-dark-green)] px-3 py-2">
             <div className="flex items-center gap-2 text-sm">
               <Loader2 className="size-4 animate-spin text-[var(--brand-green-50)]" />
-              <span className="text-[var(--text-primary)]">{isReading ? "Reading tag..." : "Writing tag..."}</span>
+              <span className="text-[var(--text-primary)]">{status}</span>
             </div>
           </div>
         )}

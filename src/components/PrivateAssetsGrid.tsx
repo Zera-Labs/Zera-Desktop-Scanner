@@ -160,7 +160,7 @@ export default function PrivateAssetsGrid({ vouchers, selectedNoteId, onSelectNo
       
       <Card variant="darkSolidGrey" className="py-4 px-4">
         <div 
-          className="drop-container flex flex-wrap gap-4 min-h-[200px]"
+          className="drop-container flex flex-wrap gap-4 min-h-[200px] content-start"
           onMouseMove={handleContainerMouseMove}
           onMouseUp={handleContainerMouseUp}
         >
@@ -184,10 +184,10 @@ export default function PrivateAssetsGrid({ vouchers, selectedNoteId, onSelectNo
                 onClickDetails={() => onViewDetails?.(t.id)}
               />
               {hoverIndex === index ? (
-                <div className="pointer-events-none absolute inset-0 rounded-[22px] ring-2 ring-[var(--brand-light-green)]/80 shadow-[0_0_8px_0_#52C97D40]" />
+                <div className="pointer-events-none absolute inset-0 rounded-[18px] ring-2 ring-[var(--corange-500)] shadow-[0_0_8px_0_rgba(251,146,60,0.3)]" />
               ) : null}
               {isSelected ? (
-                <div className="pointer-events-none absolute inset-0 rounded-[22px] ring-2 ring-[var(--brand-green)] shadow-[0_0_12px_0_#52C97D60]" />
+                <div className="pointer-events-none absolute inset-0 rounded-[18px] ring-2 ring-[var(--brand-green)] shadow-[0_0_12px_0_#52C97D60]" />
               ) : null}
             </div>
           )
