@@ -604,7 +604,7 @@ function App() {
           readerLoading={readerLoading}
           readerError={readerError}
           readerStatus={readerStatus}
-          onRefresh={() => void checkReader()}
+          onCheckReader={() => void checkReader()}
           tagData={readJson.data}
           busy={busy}
           isReading={isReading}

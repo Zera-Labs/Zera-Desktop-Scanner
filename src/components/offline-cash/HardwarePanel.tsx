@@ -13,7 +13,7 @@ type HardwarePanelProps = {
   readerLoading: boolean;
   readerError?: unknown;
   readerStatus?: string | null;
-  onRefresh: () => void;
+  onCheckReader: () => void;
   tagData: any;
   busy: boolean;
   isReading: boolean;
@@ -38,7 +38,7 @@ export default function HardwarePanel({
   readerLoading,
   readerError,
   readerStatus,
-  onRefresh,
+  onCheckReader,
   tagData,
   busy,
   isReading,
@@ -68,13 +68,38 @@ export default function HardwarePanel({
           readerLoading={readerLoading}
           readerError={readerError}
           readerStatus={readerStatus ?? undefined}
-          onRefresh={onRefresh}
+          onCheckReader={onCheckReader}
         />
 
-        {tagData && !readerError && <TagStatus tagData={tagData} />}
+        {tagData && <TagStatus tagData={tagData} />}
 
+        <div className="grid gap-2">
+          {!isReading && (
+            <Button
+              variant="greenTint"
+              onClick={onReadJson}
+              disabled={!canRead}
+              className="w-full gap-1.5 text-[var(--brand-green-50)] text-[12px] h-[40px] rounded-[12px]"
+            >
+              <ScanText className="size-6" />
+              Read Tag
+            </Button>
+          )}
+        </div>
 
+        {tagData?.ndef?.kind === "json" && tagData.ndef.json && (
+          <TagContentPreview json={tagData.ndef.json} busy={busy} onSave={onSaveTagToComputer} />
+        )}
 
+        <div className="border-t border-[var(--brand-light-green)]/20 my-4"></div>
+        {busy && status && (
+          <div className="rounded-lg border border-[var(--brand-light-green)]/35 bg-[var(--brand-light-dark-green)] px-3 py-2">
+            <div className="flex items-center gap-2 text-sm">
+              <Loader2 className="size-4 animate-spin text-[var(--brand-green-50)]" />
+              <span className="text-[var(--text-primary)]">{status}</span>
+            </div>
+          </div>
+        )}
         <WriteZone
           stagedNote={stagedNote}
           isDragOver={isDragOver}
@@ -89,31 +114,7 @@ export default function HardwarePanel({
           onMouseLeave={onMouseLeave}
           onMouseUp={onMouseUp}
         />
-        {!readerError && tagData?.ndef?.kind === "json" && tagData.ndef.json && (
-          <TagContentPreview json={tagData.ndef.json} busy={busy} onSave={onSaveTagToComputer} />
-        )}
-        <div className="grid gap-2">
-          {!isReading && (
-            <Button
-              variant="greenTint"
-              onClick={onReadJson}
-              disabled={!canRead}
-              className="w-full gap-1.5 text-[var(--brand-green-50)] text-[12px] h-[40px] rounded-[12px]"
-            >
-              <ScanText className="size-6" />
-              Read
-            </Button>
-          )}
-        </div>
 
-        {busy && status && (
-          <div className="rounded-lg border border-[var(--brand-light-green)]/35 bg-[var(--brand-light-dark-green)] px-3 py-2">
-            <div className="flex items-center gap-2 text-sm">
-              <Loader2 className="size-4 animate-spin text-[var(--brand-green-50)]" />
-              <span className="text-[var(--text-primary)]">{status}</span>
-            </div>
-          </div>
-        )}
 
         {statusHistory.length > 0 && (
           <div className="space-y-2">

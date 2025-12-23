@@ -5,10 +5,10 @@ interface ReaderStatusProps {
   readerLoading: boolean;
   readerError: unknown;
   readerStatus?: string;
-  onRefresh: () => void;
+  onCheckReader: () => void;
 }
 
-export default function ReaderStatus({ readerLoading, readerError, readerStatus, onRefresh }: ReaderStatusProps) {
+export default function ReaderStatus({ readerLoading, readerError, readerStatus, onCheckReader }: ReaderStatusProps) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
@@ -16,7 +16,7 @@ export default function ReaderStatus({ readerLoading, readerError, readerStatus,
         <Button
           size="sm"
           variant="outline"
-          onClick={onRefresh}
+          onClick={onCheckReader}
           disabled={readerLoading}
           className="h-6 px-2 text-xs"
         >
@@ -26,7 +26,7 @@ export default function ReaderStatus({ readerLoading, readerError, readerStatus,
               Checking...
             </>
           ) : (
-            'Refresh'
+            'Check Reader'
           )}
         </Button>
       </div>

@@ -75,7 +75,7 @@ export default function WriteZone({
                   className="gap-1.5 text-[var(--brand-green-50)] text-[12px] px-1 py-0.5 h-[40px] rounded-[12px]"
                 >
                   <Upload className="size-6" />
-                  Write
+                  Write to Tag
                 </Button>
                 <Button
                   variant="outline"
