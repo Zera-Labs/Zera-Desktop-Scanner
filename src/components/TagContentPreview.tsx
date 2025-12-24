@@ -1,15 +1,14 @@
-import { Clipboard, Download } from "lucide-react";
+import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import PrivateAssetCard from "@/components/PrivateAssetCard";
 
 interface TagContentPreviewProps {
   json: string;
   busy: boolean;
-  onCopy: () => void;
   onSave: () => void;
 }
 
-export default function TagContentPreview({ json, busy, onCopy, onSave }: TagContentPreviewProps) {
+export default function TagContentPreview({ json, busy, onSave }: TagContentPreviewProps) {
   try {
     const parsed = JSON.parse(json);
     return (
@@ -24,28 +23,16 @@ export default function TagContentPreview({ json, busy, onCopy, onSave }: TagCon
             className="scale-90 origin-center"
           />
         </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onCopy}
-            disabled={busy}
-            className="flex-1 gap-1.5"
-          >
-            <Clipboard className="size-3" />
-            Copy JSON
-          </Button>
-          <Button
-            variant="greenTint"
-            size="sm"
-            onClick={onSave}
-            disabled={busy}
-            className="flex-1 gap-1.5"
-          >
-            <Download className="size-3" />
-            Save to PC
-          </Button>
-        </div>
+        {/* <Button
+          variant="greenTint"
+          size="sm"
+          onClick={onSave}
+          disabled={busy}
+          className="w-full gap-1.5"
+        >
+          <Download className="size-3" />
+          Save to PC
+        </Button> */}
       </div>
     );
   } catch {
@@ -58,28 +45,16 @@ export default function TagContentPreview({ json, busy, onCopy, onSave }: TagCon
             {json}
           </pre>
         </div>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onCopy}
-            disabled={busy}
-            className="flex-1 gap-1.5"
-          >
-            <Clipboard className="size-3" />
-            Copy JSON
-          </Button>
-          <Button
-            variant="greenTint"
-            size="sm"
-            onClick={onSave}
-            disabled={busy}
-            className="flex-1 gap-1.5"
-          >
-            <Download className="size-3" />
-            Save to PC
-          </Button>
-        </div>
+        {/* <Button
+          variant="greenTint"
+          size="sm"
+          onClick={onSave}
+          disabled={busy}
+          className="w-full gap-1.5"
+        >
+          <Download className="size-3" />
+          Save to PC
+        </Button> */}
       </div>
     );
   }

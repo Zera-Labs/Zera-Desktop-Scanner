@@ -1,4 +1,4 @@
-import { Loader2, Upload } from "lucide-react";
+import { Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import PrivateAssetCard from "@/components/PrivateAssetCard";
 
@@ -66,35 +66,28 @@ export default function WriteZone({
                 className="scale-90 origin-center"
               />
             </div>
-            <div className="flex gap-3 items-center justify-center">
-              <Button
-                variant="greenTint"
-                onClick={onWrite}
-                disabled={busy}
-                className="gap-1.5 text-[var(--brand-green-50)] text-[12px] px-1 py-0.5 h-[40px] rounded-[12px]"
-              >
-                {busy && !isReading ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Writing...
-                  </>
-                ) : (
-                  <>
-                    <Upload className="size-6" />
-                    Write
-                  </>
-                )}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onClear}
-                disabled={busy}
-                className="h-9 px-5"
-              >
-                Clear
-              </Button>
-            </div>
+            {!isWriting && (
+              <div className="flex gap-3 items-center justify-center">
+                <Button
+                  variant="greenTint"
+                  onClick={onWrite}
+                  disabled={busy}
+                  className="gap-1.5 text-[var(--brand-green-50)] text-[12px] px-1 py-0.5 h-[40px] rounded-[12px]"
+                >
+                  <Upload className="size-6" />
+                  Write to Tag
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onClear}
+                  disabled={busy}
+                  className="h-9 px-5"
+                >
+                  Clear
+                </Button>
+              </div>
+            )}
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center">

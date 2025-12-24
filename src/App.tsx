@@ -8,6 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useNtag216Json } from "@/hooks/useNtag216";
 import TopBar from "@/components/TopBar";
 import OverwriteConfirmModal from "@/components/OverwriteConfirmModal";
+import VoucherDetailModal from "@/components/VoucherDetailModal";
 import VoucherPanel from "@/components/offline-cash/VoucherPanel";
 import HardwarePanel from "@/components/offline-cash/HardwarePanel";
 import { createMockPrivateCashVouchers, type PrivateCashVoucherTile, buildVoucher } from "@/lib/voucher";
@@ -29,6 +30,8 @@ function App() {
   const [draggingNoteId, setDraggingNoteId] = useState<string | null>(null);
   const [pendingNote, setPendingNote] = useState<PrivateCashVoucherTile | null>(null);
   const [showOverwriteModal, setShowOverwriteModal] = useState(false);
+  const [detailVoucher, setDetailVoucher] = useState<PrivateCashVoucherTile | null>(null);
+  const [showDetailModal, setShowDetailModal] = useState(false);
   const dropZoneRef = useRef<HTMLDivElement>(null);
 
   const [walletReady] = useState(true);
@@ -36,7 +39,6 @@ function App() {
   const [walletMissingZera] = useState(false);
   const [protocolInitialized, setProtocolInitialized] = useState(true);
   const [nullifierSetInitialized, setNullifierSetInitialized] = useState(true);
-  const [zeraPrice] = useState<number | null>(1.234567);
   const [loading, setLoading] = useState(false);
 
   const {
@@ -46,6 +48,7 @@ function App() {
     checkReader,
     readJson,
     writeJson,
+    status,
     statusHistory,
     isBusy,
     isReading,
@@ -135,6 +138,47 @@ function App() {
         setJsonText(pretty);
       if (error) {
         pushStatus(`Read JSON from tag, but parse failed: ${error}`);
+        return;
+      }
+      try {
+        const parsed = JSON.parse(res.ndef.json);
+        const newVoucher: PrivateCashVoucherTile = {
+          ...parsed,
+          id: parsed.id || `note_${res.uid || Date.now()}`,
+        };
+        
+        const historyEvent = {
+          operation: 'read' as const,
+          timestamp: new Date().toISOString(),
+          tagUid: res.uid,
+          success: true,
+        };
+        
+        setVoucherTiles(prev => {
+          const existingIndex = prev.findIndex(v => v.id === newVoucher.id);
+          if (existingIndex >= 0) {
+            const updated = [...prev];
+            const existing = updated[existingIndex];
+            updated[existingIndex] = {
+              ...existing,
+              history: [...(existing.history || []), historyEvent],
+              lastReadAt: historyEvent.timestamp,
+              readCount: (existing.readCount || 0) + 1,
+            };
+            return updated;
+          } else {
+            return [...prev, {
+              ...newVoucher,
+              history: [historyEvent],
+              lastReadAt: historyEvent.timestamp,
+              readCount: 1,
+            }];
+          }
+        });
+        
+        pushStatus(`✓ Read and saved voucher ${newVoucher.id}`);
+      } catch (err) {
+        pushStatus(`Parse error: ${String(err)}`);
       }
     } else if (res?.ndef) {
       pushStatus(`Tag has NDEF (${res.ndef.kind}), not JSON.`);
@@ -323,6 +367,14 @@ function App() {
     pushStatus("Cleared voucher list.");
   }
 
+  function handleViewVoucherDetails(noteId: string) {
+    const voucher = voucherTiles.find(v => v.id === noteId);
+    if (voucher) {
+      setDetailVoucher(voucher);
+      setShowDetailModal(true);
+    }
+  }
+
   function initializeProtocol() {
     setLoading(true);
     pushStatus("Initializing protocol…");
@@ -347,18 +399,18 @@ function App() {
   async function handleWriteNote(note: PrivateCashVoucherTile) {
     if (!canWrite) return;
 
+    if (readJson.data && !readJson.data.is_blank && readJson.data.ndef) {
+      setPendingNote(note);
+      setShowOverwriteModal(true);
+      return;
+    }
+
+    await performWrite(note);
+  }
+
+  async function performWrite(note: PrivateCashVoucherTile) {
+    
     try {
-      pushStatus("Checking tag status…");
-      const tagStatus = await readJson.mutateAsync();
-      if (tagStatus && !tagStatus.is_blank) {
-        const confirmed = window.confirm(
-          `Tag already contains data (UID: ${tagStatus.uid || "unknown"}).\n\nOverwrite?`
-        );
-        if (!confirmed) {
-          pushStatus("Write cancelled by user.");
-          return;
-        }
-      }
       const noteJson = JSON.stringify({
         id: note.id,
         voucherId: note.voucherId,
@@ -369,47 +421,41 @@ function App() {
         txSignature: note.txSignature,
         createdAt: note.createdAt,
       });
-
-      // Write to tag
       pushStatus(`Writing note ${note.id} to tag…`);
-      await writeJson.mutateAsync({ json: noteJson });
+      const result = await writeJson.mutateAsync({ json: noteJson });
+      const historyEvent = {
+        operation: 'write' as const,
+        timestamp: new Date().toISOString(),
+        tagUid: result.uid,
+        success: true,
+      };
+      
+      setVoucherTiles(prev => prev.map(v => v.id === note.id ? {
+        ...v,
+        history: [...(v.history || []), historyEvent],
+        lastWrittenAt: historyEvent.timestamp,
+        writeCount: (v.writeCount || 0) + 1,
+      } : v));
+      
       pushStatus(`✓ Note ${note.id} written successfully!`);
       
       // Clear staged note after successful write
       setStagedNote(null);
     } catch (err) {
+      // Record failed write in history
+      const historyEvent = {
+        operation: 'write' as const,
+        timestamp: new Date().toISOString(),
+        success: false,
+        error: String(err),
+      };
+      
+      setVoucherTiles(prev => prev.map(v => v.id === note.id ? {
+        ...v,
+        history: [...(v.history || []), historyEvent],
+      } : v));
+      
       pushStatus(`Write error: ${String(err)}`);
-    }
-  }
-
-
-  async function handleCopyTagNote() {
-    if (!readJson.data?.ndef?.json) {
-      pushStatus("No JSON data on tag to copy.");
-      return;
-    }
-
-    try {
-      const parsed = JSON.parse(readJson.data.ndef.json);
-      const formatted = JSON.stringify(parsed, null, 2);
-    
-      await navigator.clipboard.writeText(formatted);
-      pushStatus("✓ Note JSON copied to clipboard!");
-    
-      try {
-        const newVoucher: PrivateCashVoucherTile = {
-          ...parsed,
-          id: parsed.id || String(Date.now())
-        };
-        const exists = voucherTiles.some(v => v.id === newVoucher.id);
-        if (!exists) {
-          setVoucherTiles(prev => [...prev, newVoucher]);
-          pushStatus("✓ Note added to local collection.");
-        }
-      } catch {
- }
-    } catch (err) {
-      pushStatus(`Copy error: ${String(err)}`);
     }
   }
 
@@ -539,6 +585,7 @@ function App() {
           onChooseFiles={() => assetFileInputRef.current?.click()}
           onClearAssets={handleClearAssets}
           onSelectNote={setSelectedNoteId}
+          onViewDetails={handleViewVoucherDetails}
           onDragStart={(noteId) => {
             setDraggingNoteId(noteId);
           }}
@@ -557,12 +604,12 @@ function App() {
           readerLoading={readerLoading}
           readerError={readerError}
           readerStatus={readerStatus}
-          onRefresh={() => void checkReader()}
+          onCheckReader={() => void checkReader()}
           tagData={readJson.data}
           busy={busy}
           isReading={isReading}
           isWriting={isWriting}
-          onCopyTagNote={() => void handleCopyTagNote()}
+          status={status}
           onSaveTagToComputer={() => void handleSaveTagToComputer()}
           onReadJson={handleReadJson}
           canRead={canRead}
@@ -570,6 +617,7 @@ function App() {
           isDragOver={isDragOver}
           dropZoneRef={dropZoneRef}
           onWrite={() => {
+            console.log("⭐ WRITE BUTTON CLICKED - stagedNote is:", stagedNote);
             if (stagedNote) {
               void handleWriteNote(stagedNote);
             }
@@ -596,14 +644,9 @@ function App() {
             if (draggingNoteId) {
               const note = voucherTiles.find((v) => v.id === draggingNoteId);
               if (note) {
-                if (readJson.data && !readJson.data.is_blank && readJson.data.ndef) {
-                  setPendingNote(note);
-                  setShowOverwriteModal(true);
-                } else {
-                  setStagedNote(note);
-                  setSelectedNoteId(note.id);
-                  pushStatus(`✓ Note ready. Click "Write to Tag" to write to the physical tag.`);
-                }
+                setStagedNote(note);
+                setSelectedNoteId(note.id);
+                pushStatus(`✓ Note staged. Click "Write to Tag" to write.`);
               }
               setDraggingNoteId(null);
             }
@@ -642,11 +685,6 @@ function App() {
               </Button>
             </div>
         ) : null}
-        {zeraPrice ? (
-          <div className="text-xs text-[var(--text-tertiary)]">
-            Current ZERA price: <span className="text-[var(--brand-green-50)]">${zeraPrice.toFixed(6)}</span>
-        </div>
-      ) : null}
       </section>
 
       <OverwriteConfirmModal
@@ -659,15 +697,22 @@ function App() {
           setPendingNote(null);
           pushStatus("Cancelled overwrite.");
         }}
-        onConfirm={() => {
+        onConfirm={async () => {
           if (pendingNote) {
-            setStagedNote(pendingNote);
-            setSelectedNoteId(pendingNote.id);
-            pushStatus(`✓ Note ready. Click "Write to Tag" to overwrite the tag content.`);
+            setShowOverwriteModal(false);
+            setPendingNote(null);
+            await performWrite(pendingNote);
+          } else {
+            setShowOverwriteModal(false);
+            setPendingNote(null);
           }
-          setShowOverwriteModal(false);
-          setPendingNote(null);
         }}
+      />
+
+      <VoucherDetailModal
+        voucher={detailVoucher}
+        open={showDetailModal}
+        onOpenChange={setShowDetailModal}
       />
     </div>
   );

@@ -18,6 +18,7 @@ type VoucherPanelProps = {
   onChooseFiles: () => void;
   onClearAssets: () => void;
   onSelectNote: (id: string) => void;
+  onViewDetails: (id: string) => void;
   onDragStart: (noteId: string) => void;
   onDragEnd: () => void;
   assetDirectoryInputRef: RefObject<HTMLInputElement> | React.MutableRefObject<HTMLInputElement | null>;
@@ -39,6 +40,7 @@ export default function VoucherPanel({
   onChooseFiles,
   onClearAssets,
   onSelectNote,
+  onViewDetails,
   onDragStart,
   onDragEnd,
   assetDirectoryInputRef,
@@ -118,6 +120,7 @@ export default function VoucherPanel({
         vouchers={vouchers}
         selectedNoteId={selectedNoteId}
         onSelectNote={onSelectNote}
+        onViewDetails={onViewDetails}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
       />
