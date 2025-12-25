@@ -1,400 +1,719 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type DragEvent } from "react";
+import { listen, TauriEvent } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { AlertCircle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-
-type NdefKind = "text" | "uri" | "json" | "unknown";
-
-type NdefSummary = {
-  kind: NdefKind;
-  text?: string | null;
-  uri?: string | null;
-  language?: string | null;
-  mime_type?: string | null;
-  json?: string | null;
-  message_hex: string;
-};
-
-type Ntag216ReadResult = {
-  uid?: string | null;
-  is_blank: boolean;
-  ndef?: NdefSummary | null;
-};
-
-type WriteResult = {
-  uid?: string | null;
-  ok: boolean;
-  skipped: boolean;
-  error?: string | null;
-};
-
-const JSON_MIME = "application/json";
-
-function prettyJson(raw: string): { pretty: string; error: string | null } {
-  try {
-    return { pretty: JSON.stringify(JSON.parse(raw), null, 2), error: null };
-  } catch (e) {
-    return { pretty: raw, error: String(e) };
-  }
-}
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useNtag216Json } from "@/hooks/useNtag216";
+import TopBar from "@/components/TopBar";
+import OverwriteConfirmModal from "@/components/OverwriteConfirmModal";
+import VoucherDetailModal from "@/components/VoucherDetailModal";
+import VoucherPanel from "@/components/offline-cash/VoucherPanel";
+import HardwarePanel from "@/components/offline-cash/HardwarePanel";
+import { type PrivateCashVoucherTile, buildVoucher } from "@/lib/voucher";
+import { prettyJson } from "@/lib/utils";
+import { IMPORT_DEBOUNCE_MS, NULLIFIER_INIT_DELAY_MS, PROTOCOL_INIT_DELAY_MS } from "@/lib/constants";
 
 function App() {
-  const [deviceStatus, setDeviceStatus] = useState<string>("");
-  const [jsonText, setJsonText] = useState<string>('{"hello":"ntag216"}');
-  const [lastRead, setLastRead] = useState<Ntag216ReadResult | null>(null);
-  const [status, setStatus] = useState<string>("");
-  const [busy, setBusy] = useState<boolean>(false);
+  const [jsonText, setJsonText] = useState('{"hello":"ntag216"}');
 
-  const [overwritePrompt, setOverwritePrompt] = useState<{
-    uid: string;
-    kind: string;
-  } | null>(null);
-  const overwriteResolveRef = useRef<((ok: boolean) => void) | null>(null);
+  const [voucherTiles, setVoucherTiles] = useState<PrivateCashVoucherTile[]>([]);
+  const [voucherLoading, setVoucherLoading] = useState(false);
+  const [hasScannedVouchers, setHasScannedVouchers] = useState(false);
+  const assetFileInputRef = useRef<HTMLInputElement>(null);
+  const assetDirectoryInputRef = useRef<HTMLInputElement>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [isImportDragOver, setIsImportDragOver] = useState(false);
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  const [stagedNote, setStagedNote] = useState<PrivateCashVoucherTile | null>(null);
+  const [draggingNoteId, setDraggingNoteId] = useState<string | null>(null);
+  const [pendingNote, setPendingNote] = useState<PrivateCashVoucherTile | null>(null);
+  const [showOverwriteModal, setShowOverwriteModal] = useState(false);
+  const [detailVoucher, setDetailVoucher] = useState<PrivateCashVoucherTile | null>(null);
+  const [showDetailModal, setShowDetailModal] = useState(false);
+  const dropZoneRef = useRef<HTMLDivElement>(null);
 
-  function requestOverwriteConfirm(uid: string, kind: string): Promise<boolean> {
-    return new Promise((resolve) => {
-      overwriteResolveRef.current = resolve;
-      setOverwritePrompt({ uid, kind });
-    });
-  }
+  const [walletReady] = useState(true);
+  const [walletNeedsExtensionSwitch] = useState(false);
+  const [walletMissingZera] = useState(false);
+  const [protocolInitialized, setProtocolInitialized] = useState(true);
+  const [nullifierSetInitialized, setNullifierSetInitialized] = useState(true);
+  const [loading, setLoading] = useState(false);
 
-  function resolveOverwriteConfirm(ok: boolean) {
-    overwriteResolveRef.current?.(ok);
-    overwriteResolveRef.current = null;
-    setOverwritePrompt(null);
-  }
+  const {
+    readerStatus,
+    readerLoading,
+    readerError,
+    checkReader,
+    readJson,
+    writeJson,
+    status,
+    statusHistory,
+    isBusy,
+    isReading,
+    isWriting,
+    pushStatus,
+  } = useNtag216Json();
 
-  const lastReadJson = useMemo(() => {
-    if (lastRead?.ndef?.kind !== "json") return null;
-    return lastRead.ndef.json ?? null;
-  }, [lastRead]);
+  const busy = isBusy;
+  const canRead = !busy;
+  const canWrite = !busy && Boolean(jsonText.trim());
+  const lastImportTsRef = useRef(0);
 
-  const lastReadJsonFmt = useMemo(() => {
-    if (!lastReadJson) return null;
-    return prettyJson(lastReadJson);
-  }, [lastReadJson]);
-
-  const jsonSizing = useMemo(() => {
-    try {
-      const obj = JSON.parse(jsonText);
-      const minified = JSON.stringify(obj);
-      const payloadBytes = new TextEncoder().encode(minified).length;
-      const typeLen = JSON_MIME.length;
-      const payloadLenFieldBytes = payloadBytes <= 0xff ? 1 : 4;
-      const ndefLen = 1 + 1 + payloadLenFieldBytes + typeLen + payloadBytes;
-      const tlvHeaderBytes = ndefLen <= 0xfe ? 2 : 4; // 0x03 + len OR 0x03 0xFF hi lo
-      const tlvLen = tlvHeaderBytes + ndefLen + 1; // + 0xFE terminator
-      const paddedLen = Math.ceil(tlvLen / 4) * 4;
-      const pages = paddedLen / 4;
-      // NTAG216 CC reports 0x6D * 8 = 872 bytes usable NDEF memory.
-      const maxBytes = 872;
-      const fits = paddedLen <= maxBytes;
-      return {
-        ok: true as const,
-        minified,
-        payloadBytes,
-        ndefLen,
-        tlvLen,
-        paddedLen,
-        pages,
-        maxBytes,
-        fits,
-      };
-    } catch (e) {
-      return { ok: false as const, error: String(e) };
+  const claimImportSlot = (hasFiles: boolean) => {
+    if (!hasFiles) return false;
+    const now = Date.now();
+    if (now - lastImportTsRef.current < IMPORT_DEBOUNCE_MS) {
+      return false;
     }
-  }, [jsonText]);
+    lastImportTsRef.current = now;
+    return true;
+  };
 
-  async function checkNfcReader() {
-    setDeviceStatus("Checking NFC reader…");
+  const handleWindowDragOverReact = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsImportDragOver(true);
+  };
+
+  const handleWindowDragLeaveReact = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsImportDragOver(false);
+  };
+
+  const handleWindowDropReact = async (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsImportDragOver(false);
+    await handleDataTransferImport(event.dataTransfer);
+  };
+
+
+  useEffect(() => {
+    if (assetDirectoryInputRef.current) {
+      assetDirectoryInputRef.current.setAttribute("webkitdirectory", "true");
+      assetDirectoryInputRef.current.setAttribute("directory", "true");
+    }
+
+    const preventDefaultDragOver = (e: DragEvent | DragEvent<Element>) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+
+    window.addEventListener("dragover", preventDefaultDragOver as unknown as EventListener);
+    let unlistenFileDrop: (() => void) | undefined;
+
+    // Subscribe to Tauri file-drop events to get filesystem paths when the File API is blocked.
+    listen(TauriEvent.DRAG_DROP, async (event) => {
+      const payload = event.payload as unknown;
+      const paths = Array.isArray(payload)
+        ? (payload as string[])
+        : (payload as { paths?: string[] })?.paths ?? [];
+      if (paths.length) {
+        await handleFilePathImport(paths);
+      }
+    })
+      .then((unlisten) => {
+        unlistenFileDrop = unlisten;
+      })
+      .catch(() => {
+        /* ignore */
+      });
+
+    return () => {
+      window.removeEventListener("dragover", preventDefaultDragOver as unknown as EventListener);
+      if (unlistenFileDrop) {
+        unlistenFileDrop();
+      }
+    };
+  }, []);
+
+  async function handleReadJson() {
+    if (!canRead) return;
+    const res = await readJson.mutateAsync();
+    if (res?.ndef?.kind === "json" && res.ndef.json) {
+        const { pretty, error } = prettyJson(res.ndef.json);
+        setJsonText(pretty);
+      if (error) {
+        pushStatus(`Read JSON from tag, but parse failed: ${error}`);
+        return;
+      }
+      try {
+        const parsed = JSON.parse(res.ndef.json);
+        const newVoucher: PrivateCashVoucherTile = {
+          ...parsed,
+          id: parsed.id || `note_${res.uid || Date.now()}`,
+        };
+        
+        const historyEvent = {
+          operation: 'read' as const,
+          timestamp: new Date().toISOString(),
+          tagUid: res.uid,
+          success: true,
+        };
+        
+        setVoucherTiles(prev => {
+          const existingIndex = prev.findIndex(v => v.id === newVoucher.id);
+          if (existingIndex >= 0) {
+            const updated = [...prev];
+            const existing = updated[existingIndex];
+            updated[existingIndex] = {
+              ...existing,
+              history: [...(existing.history || []), historyEvent],
+              lastReadAt: historyEvent.timestamp,
+              readCount: (existing.readCount || 0) + 1,
+            };
+            return updated;
+          } else {
+            return [...prev, {
+              ...newVoucher,
+              history: [historyEvent],
+              lastReadAt: historyEvent.timestamp,
+              readCount: 1,
+            }];
+          }
+        });
+        
+        pushStatus(`✓ Read and saved voucher ${newVoucher.id}`);
+      } catch (err) {
+        pushStatus(`Parse error: ${String(err)}`);
+      }
+    } else if (res?.ndef) {
+      pushStatus(`Tag has NDEF (${res.ndef.kind}), not JSON.`);
+    } else {
+      pushStatus("No NDEF found on tag.");
+    }
+  }
+
+  async function getFileContent(file: File): Promise<string> {
     try {
-      const status = await invoke<string>("check_nfc_reader");
-      setDeviceStatus(status);
-    } catch (e) {
-      setDeviceStatus(`Reader error: ${String(e)}`);
+      return await file.text();
+    } catch {
+      throw new Error("Unable to read file content from drop.");
+    }
+  }
+
+  async function loadVoucherFiles(files: File[]): Promise<PrivateCashVoucherTile[]> {
+    const loaded: PrivateCashVoucherTile[] = [];
+
+    for (const file of files) {
+      try {
+        const content = await getFileContent(file);
+      const parsed = JSON.parse(content);
+      loaded.push(buildVoucher(parsed, file.name));
+      } catch (err) {
+        pushStatus(`Skipping ${file.name}: ${String(err)}`);
+      }
+    }
+
+    return loaded;
+  }
+
+  async function handleFilePathImport(paths: string[]) {
+    const jsonPaths = paths.filter((p) => p.toLowerCase().endsWith(".json"));
+
+    if (jsonPaths.length === 0) {
+      pushStatus("Dropped items contained no JSON files.");
+      return;
+    }
+
+    if (!claimImportSlot(jsonPaths.length > 0)) return;
+    setVoucherLoading(true);
+    try {
+      const loaded: PrivateCashVoucherTile[] = [];
+      for (const path of jsonPaths) {
+        try {
+          const content = await invoke<string>("read_file_text", { path });
+        const parsed = JSON.parse(content);
+        loaded.push(buildVoucher(parsed, path));
+        } catch (err) {
+          pushStatus(`Skipping ${path}: ${String(err)}`);
+        }
+      }
+      setVoucherTiles((prev) => {
+        const existingIds = new Set(prev.map((v) => v.id));
+        const incoming = loaded.filter((v) => !existingIds.has(v.id));
+        return [...prev, ...incoming];
+      });
+      setHasScannedVouchers(true);
+      pushStatus(
+        loaded.length
+          ? `✓ Imported ${loaded.length} voucher file(s) from drop.`
+          : "No valid voucher JSON files in dropped items."
+      );
+    } catch (err) {
+      pushStatus(`Drop import failed: ${String(err)}`);
+    } finally {
+      setVoucherLoading(false);
+    }
+  }
+
+  async function handleDataTransferImport(dataTransfer: DataTransfer | null) {
+    if (!dataTransfer) return;
+    const files = Array.from(dataTransfer.files ?? []).filter((file) =>
+      file.name.toLowerCase().endsWith(".json")
+    );
+
+    if (files.length === 0) {
+      pushStatus("Drop JSON voucher files to import.");
+      return;
+    }
+
+    if (!claimImportSlot(files.length > 0)) return;
+    setVoucherLoading(true);
+    try {
+      const loaded = await loadVoucherFiles(files);
+      setVoucherTiles((prev) => {
+        const existingIds = new Set(prev.map((v) => v.id));
+        const incoming = loaded.filter((v) => !existingIds.has(v.id));
+        return [...prev, ...incoming];
+      });
+      setHasScannedVouchers(true);
+      pushStatus(
+        loaded.length
+          ? `✓ Imported ${loaded.length} voucher file(s) from drop.`
+          : "Dropped files did not contain valid voucher JSON."
+      );
+    } catch (err) {
+      pushStatus(`Drop import failed: ${String(err)}`);
+    } finally {
+      setVoucherLoading(false);
+    }
+  }
+
+  function handleLocateAssets() {
+    assetDirectoryInputRef.current?.click();
+  }
+
+  function handleImportDragOver(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.dataTransfer?.types.includes("Files")) {
+      setIsImportDragOver(true);
+    }
+  }
+
+  function handleImportDragLeave(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsImportDragOver(false);
+  }
+
+  async function handleImportDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsImportDragOver(false);
+
+    await handleDataTransferImport(event.dataTransfer);
+  }
+
+  async function handleAssetDirectorySelected(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []).filter((file) => file.name.toLowerCase().endsWith(".json"));
+    setVoucherLoading(true);
+    try {
+      if (files.length === 0) {
+        setVoucherTiles([]);
+        setHasScannedVouchers(true);
+        pushStatus(
+          "No voucher JSON files found or folder access was blocked. If Windows shows 'organization turned off access', try 'Choose files' or drag-and-drop individual JSONs instead."
+        );
+        return;
+      }
+
+      const loaded = await loadVoucherFiles(files);
+      setVoucherTiles(loaded);
+      setHasScannedVouchers(true);
+      pushStatus(
+        loaded.length
+          ? `Loaded ${loaded.length} voucher file(s) from the selected folder.`
+          : "No voucher JSON files found in the selected folder."
+      );
+    } catch (err) {
+      pushStatus(`Folder scan failed: ${String(err)}`);
+    } finally {
+      setVoucherLoading(false);
+      event.target.value = "";
+    }
+  }
+
+  async function handleAssetFilesSelected(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []).filter((file) => file.name.toLowerCase().endsWith(".json"));
+    setVoucherLoading(true);
+    try {
+      if (files.length === 0) {
+        pushStatus(
+          "No files selected or access was blocked. If you saw a Windows access warning, try drag-and-drop or pick files from a different folder."
+        );
+        return;
+      }
+
+      const loaded = await loadVoucherFiles(files);
+      setVoucherTiles(loaded);
+      setHasScannedVouchers(true);
+      pushStatus(`Loaded ${loaded.length} file(s) into vouchers.`);
+    } catch (err) {
+      pushStatus(`Load failed: ${String(err)}`);
+    } finally {
+      setVoucherLoading(false);
+      event.target.value = "";
+    }
+  }
+
+  function handleClearAssets() {
+    setVoucherTiles([]);
+    setHasScannedVouchers(true);
+    pushStatus("Cleared voucher list.");
+  }
+
+  function handleViewVoucherDetails(noteId: string) {
+    const voucher = voucherTiles.find(v => v.id === noteId);
+    if (voucher) {
+      setDetailVoucher(voucher);
+      setShowDetailModal(true);
+    }
+  }
+
+  function initializeProtocol() {
+    setLoading(true);
+    pushStatus("Initializing protocol…");
+    setTimeout(() => {
+      setProtocolInitialized(true);
+      setLoading(false);
+      pushStatus("Protocol initialized.");
+    }, PROTOCOL_INIT_DELAY_MS);
+  }
+
+  function initializeNullifierSet() {
+    setLoading(true);
+    pushStatus("Initializing nullifier set…");
+    setTimeout(() => {
+      setNullifierSetInitialized(true);
+      setLoading(false);
+      pushStatus("Nullifier set initialized.");
+    }, NULLIFIER_INIT_DELAY_MS);
+  }
+
+
+  async function handleWriteNote(note: PrivateCashVoucherTile) {
+    if (!canWrite) return;
+
+    if (readJson.data && !readJson.data.is_blank && readJson.data.ndef) {
+      setPendingNote(note);
+      setShowOverwriteModal(true);
+      return;
+    }
+
+    await performWrite(note);
+  }
+
+  async function performWrite(note: PrivateCashVoucherTile) {
+    
+    try {
+      const noteJson = JSON.stringify({
+        id: note.id,
+        voucherId: note.voucherId,
+        amount: note.amount,
+        recipient: note.recipient,
+        secret: note.secret,
+        salt: note.salt,
+        txSignature: note.txSignature,
+        createdAt: note.createdAt,
+      });
+      pushStatus(`Writing note ${note.id} to tag…`);
+      const result = await writeJson.mutateAsync({ json: noteJson });
+      const historyEvent = {
+        operation: 'write' as const,
+        timestamp: new Date().toISOString(),
+        tagUid: result.uid,
+        success: true,
+      };
+      
+      setVoucherTiles(prev => prev.map(v => v.id === note.id ? {
+        ...v,
+        history: [...(v.history || []), historyEvent],
+        lastWrittenAt: historyEvent.timestamp,
+        writeCount: (v.writeCount || 0) + 1,
+      } : v));
+      
+      pushStatus(`✓ Note ${note.id} written successfully!`);
+      
+      // Clear staged note after successful write
+      setStagedNote(null);
+    } catch (err) {
+      // Record failed write in history
+      const historyEvent = {
+        operation: 'write' as const,
+        timestamp: new Date().toISOString(),
+        success: false,
+        error: String(err),
+      };
+      
+      setVoucherTiles(prev => prev.map(v => v.id === note.id ? {
+        ...v,
+        history: [...(v.history || []), historyEvent],
+      } : v));
+      
+      pushStatus(`Write error: ${String(err)}`);
+    }
+  }
+
+  async function handleSaveTagToComputer() {
+    if (!readJson.data?.ndef?.json) {
+      pushStatus("No JSON data on tag to save.");
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(readJson.data.ndef.json);
+      const newVoucher: PrivateCashVoucherTile = {
+        ...parsed,
+        id: parsed.id || `note_${readJson.data.uid || Date.now()}`
+      };
+      const exists = voucherTiles.some(v => v.id === newVoucher.id);
+      if (!exists) {
+        setVoucherTiles(prev => [...prev, newVoucher]);
+        pushStatus("✓ Note saved to computer storage!");
+      } else {
+        pushStatus("✓ Note already exists in collection.");
+      }
+    } catch (err) {
+      pushStatus(`Save error: ${String(err)}`);
     }
   }
 
   useEffect(() => {
-    checkNfcReader();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    void checkReader();
+  }, [checkReader]);
 
-  async function readJsonTag() {
-    if (busy) return;
-    setBusy(true);
-    setStatus("Reading… (place tag on NFC reader)");
-    setLastRead(null);
-    try {
-      const res = await invoke<Ntag216ReadResult>("read_ntag216_desktop");
-      setLastRead(res);
-      if (res.ndef?.kind === "json" && res.ndef.json) {
-        const { pretty, error } = prettyJson(res.ndef.json);
-        setJsonText(pretty);
-        setStatus(error ? `Read JSON from tag, but it failed to parse in UI: ${error}` : "Read JSON from tag.");
-      } else if (res.ndef) {
-        setStatus(`Tag has NDEF (${res.ndef.kind}), not JSON.`);
-      } else {
-        setStatus("No NDEF found on tag.");
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      if (draggingNoteId) {
+        setTimeout(() => {
+          setDraggingNoteId(null);
+          setIsDragOver(false);
+        }, 50);
       }
-    } catch (e) {
-      const errorMsg = String(e);
-      setStatus(`Error: ${errorMsg}`);
-      console.error("Read error:", e);
-    } finally {
-      setBusy(false);
-    }
-  }
+    };
 
-  async function writeJsonTag() {
-    if (busy) return;
-    setBusy(true);
-    setStatus("Checking tag… (place tag on NFC reader)");
-    try {
-      const before = await invoke<Ntag216ReadResult>("read_ntag216_desktop");
-      setLastRead(before);
-
-      const willOverwrite = !before.is_blank;
-      if (willOverwrite) {
-        const uid = before.uid ?? "(unknown uid)";
-        const kind = before.ndef?.kind ?? "unknown";
-        setStatus("Tag is not blank — confirm overwrite…");
-        const ok = await requestOverwriteConfirm(uid, kind);
-        if (!ok) {
-          setStatus("Cancelled (did not overwrite existing tag).");
-          return;
-        }
-      }
-
-      setStatus(willOverwrite ? "Overwriting… (place tag on NFC reader)" : "Writing… (place tag on NFC reader)");
-      const res = await invoke<WriteResult>("write_ntag216_json_desktop", {
-        json: jsonText,
-        options: { existing_tag_behavior: "overwrite" },
-      });
-      setStatus(
-        res.skipped
-          ? "Skipped (already written)."
-          : willOverwrite
-          ? "Overwrote tag with JSON."
-          : "Wrote JSON to blank tag."
-      );
-    } catch (e) {
-      setStatus(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
+  }, [draggingNoteId]);
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[var(--background)] text-[var(--text-primary)]">
-      <div className="pointer-events-none absolute -left-40 top-0 -z-10 h-80 w-80 rounded-full bg-[var(--brand-green-400)]/15 blur-3xl" />
-      <div className="pointer-events-none absolute right-[-120px] top-24 -z-10 h-96 w-96 rounded-full bg-[var(--vb-500)]/15 blur-3xl" />
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 -z-10 h-64 bg-gradient-to-t from-[var(--brand-dark-green)]/60 to-transparent" />
+    <div
+      className={`min-h-screen bg-[var(--background)] text-[var(--text-primary)] ${
+        isImportDragOver ? "outline outline-2 outline-[var(--brand-light-green)]/70 outline-offset-4" : ""
+      }`}
+      onDragOver={handleWindowDragOverReact}
+      onDragLeave={handleWindowDragLeaveReact}
+      onDrop={handleWindowDropReact}
+    >
+      <TopBar />
+      <div className="px-6 py-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <h1 className="font-pp-machina text-[24px] font-normal leading-[32px] tracking-[-0.006em] text-[var(--text-primary)]">
+          Offline Cash
+        </h1>
+        <div className="flex flex-wrap items-center gap-3 md:gap-4">
+          {walletNeedsExtensionSwitch ? (
+            <div className="flex items-center gap-2 rounded-[12px] border border-yellow-400/50 bg-yellow-500/10 px-4 py-2 text-[11px] text-yellow-100 max-w-[420px]">
+              <span className="font-medium text-yellow-50/90">Switch wallets in your extension.</span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="h-5 w-5 rounded-full border border-yellow-200/70 text-[11px] font-semibold text-yellow-50/90"
+                    aria-label="Why is this required?"
+                  >
+                    ?
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent className="tooltip-brand max-w-xs text-[11px] leading-relaxed">
+                  Select this wallet in your browser extension before attempting NFC actions so transactions do not fail.
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          ) : null}
+          {walletMissingZera ? (
+            <div className="flex items-center gap-2 rounded-[12px] border border-[var(--brand-light-green)]/60 bg-[var(--brand-dark-green)]/40 px-4 py-2 text-[11px] text-[var(--brand-green-50)] max-w-[420px]">
+              <span className="font-medium text-[var(--brand-green-50)]/90">Keep some ZERA in this wallet to write.</span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="h-5 w-5 rounded-full border border-[var(--brand-light-green)]/70 text-[11px] font-semibold text-[var(--brand-green-50)]/80"
+                    aria-label="Why is ZERA required?"
+                  >
+                    ?
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent className="tooltip-brand max-w-xs text-[11px] leading-relaxed">
+                  Offline Cash currently burns a small amount of ZERA when writing to the contract. Keep a small balance so
+                  writes can complete.
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          ) : null}
+        </div>
+      </div>
 
-      <main className="relative mx-auto max-w-6xl space-y-6 px-4 py-10">
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div className="space-y-2">
-            <p className="text-xs uppercase tracking-[0.24em] text-[var(--text-tertiary)]">Desktop NFC · NTAG216</p>
-            <h1 className="font-pp-machina text-3xl leading-tight text-[var(--text-primary)]">NTAG216 JSON Studio</h1>
-            <p className="text-sm text-[var(--text-tertiary)]">
-              Modern desk UI to auto-detect your NFC reader, validate payload sizing, and read/write{" "}
-              <span className="font-mono">{JSON_MIME}</span> records.
+      <div className="px-6">
+        <div className="mb-4 flex items-start gap-3 rounded-xl border border-[var(--corange-500)] bg-[color-mix(in_srgb,_var(--corange-900)_80%,_transparent)] px-4 py-3 text-xs text-[var(--corange-50)]">
+          <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--corange-300)]" />
+          <div className="space-y-1">
+            <p className="font-medium text-[11px] uppercase tracking-[0.12em] text-[var(--corange-200)]">Early demo - use with caution</p>
+            <p className="leading-relaxed">
+              Offline Cash is an early, partial implementation intended for demonstration and testing only. Use at your own risk and
+              only write small amounts you are fully prepared to lose.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={readJsonTag} disabled={busy}>
-              {busy ? "Working…" : "Quick read"}
-            </Button>
-          </div>
         </div>
+      </div>
 
-        <Card
-          variant="outline"
-          tone="green"
-          className="border border-[var(--brand-light-green)]/60 bg-[var(--brand-dark-green)]/50 backdrop-blur"
-        >
-          <CardHeader className="gap-3">
-            <CardTitle className="text-lg">NFC Reader</CardTitle>
-            <CardDescription>
-              Auto-detects PC/SC-compatible NFC readers (ACR122U, PN532, etc.)
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
+      <section className="px-6 py-6 grid gap-6 lg:grid-cols-[2fr_1fr]">
+        <VoucherPanel
+          vouchers={voucherTiles}
+          selectedNoteId={selectedNoteId}
+          voucherLoading={voucherLoading}
+          hasScannedVouchers={hasScannedVouchers}
+          isImportDragOver={isImportDragOver}
+          onImportDragOver={handleImportDragOver}
+          onImportDragLeave={handleImportDragLeave}
+          onImportDrop={handleImportDrop}
+          onLocateAssets={handleLocateAssets}
+          onChooseFiles={() => assetFileInputRef.current?.click()}
+          onClearAssets={handleClearAssets}
+          onSelectNote={setSelectedNoteId}
+          onViewDetails={handleViewVoucherDetails}
+          onDragStart={(noteId) => {
+            setDraggingNoteId(noteId);
+          }}
+          onDragEnd={() => {
+            setTimeout(() => {
+              setDraggingNoteId(null);
+              setIsDragOver(false);
+            }, 100);
+          }}
+          assetDirectoryInputRef={assetDirectoryInputRef}
+          assetFileInputRef={assetFileInputRef}
+          onAssetDirectorySelected={handleAssetDirectorySelected}
+          onAssetFilesSelected={handleAssetFilesSelected}
+        />
+        <HardwarePanel
+          readerLoading={readerLoading}
+          readerError={readerError}
+          readerStatus={readerStatus}
+          onCheckReader={() => void checkReader()}
+          tagData={readJson.data}
+          busy={busy}
+          isReading={isReading}
+          isWriting={isWriting}
+          status={status}
+          onSaveTagToComputer={() => void handleSaveTagToComputer()}
+          onReadJson={handleReadJson}
+          canRead={canRead}
+          stagedNote={stagedNote}
+          isDragOver={isDragOver}
+          dropZoneRef={dropZoneRef}
+          onWrite={() => {
+            console.log("⭐ WRITE BUTTON CLICKED - stagedNote is:", stagedNote);
+            if (stagedNote) {
+              void handleWriteNote(stagedNote);
+            }
+          }}
+          onClear={() => {
+            setStagedNote(null);
+            setSelectedNoteId(null);
+            pushStatus("Cleared staged note.");
+          }}
+          onMouseEnter={() => {
+            if (draggingNoteId) {
+              setIsDragOver(true);
+            }
+          }}
+          onMouseMove={() => {
+            if (draggingNoteId && !isDragOver) {
+              setIsDragOver(true);
+            }
+          }}
+          onMouseLeave={() => {
+            setIsDragOver(false);
+          }}
+          onMouseUp={() => {
+            if (draggingNoteId) {
+              const note = voucherTiles.find((v) => v.id === draggingNoteId);
+              if (note) {
+                setStagedNote(note);
+                setSelectedNoteId(note.id);
+                pushStatus(`✓ Note staged. Click "Write to Tag" to write.`);
+              }
+              setDraggingNoteId(null);
+            }
+            setIsDragOver(false);
+          }}
+          statusHistory={statusHistory}
+        />
+      </section>
+
+      <section className="px-6 pb-4 space-y-3">
+        {!walletReady ? (
+          <div className="flex items-center gap-2 text-xs text-[var(--text-tertiary)]">
+            <AlertCircle className="size-4 text-[var(--corange-400)]" />
+            <span>Connect a Solana wallet with Privy to use Offline Cash.</span>
+          </div>
+        ) : null}
+        {walletReady && protocolInitialized === false ? (
+          <div className="flex items-center justify-between rounded-md border border-[var(--brand-light-green)]/40 bg-[var(--brand-light-dark-green)]/30 px-4 py-3 text-xs text-[var(--text-primary)]">
             <div className="flex items-center gap-2">
-              <Button variant="secondary" onClick={checkNfcReader} disabled={busy}>
-                Check Reader
-              </Button>
+              <AlertCircle className="size-4 text-[var(--brand-green)]" />
+              <span>Protocol is not initialized for this wallet yet.</span>
             </div>
-            <div className="rounded-lg border border-[var(--brand-light-green)]/25 bg-[var(--brand-light-dark-green)] px-3 py-2 text-sm text-[var(--text-primary)]">
-              {deviceStatus || "Waiting for device scan…"}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card variant="darkSolidGrey" className="border border-[var(--brand-light-green)]/25">
-          <CardHeader className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-            <div className="space-y-1">
-              <CardTitle className="font-pp-machina text-xl">JSON Tag</CardTitle>
-              <CardDescription>
-                Writes as an NDEF MIME record (<span className="font-mono">{JSON_MIME}</span>). Payload is validated and
-                minified in Rust.
-              </CardDescription>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={readJsonTag} disabled={busy}>
-                {busy ? "Working…" : "Read JSON"}
-              </Button>
-              <Button onClick={writeJsonTag} disabled={busy || !jsonText.trim()}>
-                {busy ? "Working…" : "Write JSON"}
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="grid gap-6 lg:grid-cols-[1.6fr_1fr]">
-            <div className="space-y-3">
-              <div className="space-y-2">
-                <Label htmlFor="json">JSON payload</Label>
-                <Textarea
-                  id="json"
-                  value={jsonText}
-                  onChange={(e) => setJsonText(e.currentTarget.value)}
-                  rows={14}
-                  className="rounded-xl border-[var(--brand-light-green)]/35 bg-[var(--wallet-card-grey)] font-mono text-sm leading-6 text-[var(--text-primary)] shadow-[0_0_0_1px_rgba(82,201,125,0.08)]"
-                />
+            <Button size="sm" variant="greenTint" disabled={loading} onClick={initializeProtocol} expand>
+              {loading ? "Initializing..." : "Initialize protocol"}
+            </Button>
               </div>
-              {jsonSizing.ok ? (
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-lg border border-[var(--brand-light-green)]/25 bg-[var(--brand-light-dark-green)] px-4 py-3">
-                    <div className="text-xs text-[var(--text-tertiary)]">Minified</div>
-                    <div className="font-mono text-sm text-[var(--text-primary)]">{jsonSizing.payloadBytes} bytes</div>
-                  </div>
-                  <div className="rounded-lg border border-[var(--brand-light-green)]/25 bg-[var(--brand-light-dark-green)] px-4 py-3">
-                    <div className="text-xs text-[var(--text-tertiary)]">On-tag (TLV+pads)</div>
-                    <div className="font-mono text-sm text-[var(--text-primary)]">
-                      {jsonSizing.paddedLen}/{jsonSizing.maxBytes} bytes
-                    </div>
-                  </div>
-                  <div className="rounded-lg border border-[var(--brand-light-green)]/25 bg-[var(--brand-light-dark-green)] px-4 py-3">
-                    <div className="text-xs text-[var(--text-tertiary)]">Pages used</div>
-                    <div className="font-mono text-sm text-[var(--text-primary)]">{jsonSizing.pages}</div>
-                  </div>
-                </div>
-              ) : (
-                <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-                  JSON parse error: {jsonSizing.error}
-                </div>
-              )}
-              <div
-                className={`rounded-lg border px-3 py-2 text-sm ${
-                  status
-                    ? "border-[var(--brand-light-green)]/35 bg-[var(--brand-light-dark-green)] text-[var(--text-primary)]"
-                    : "border-transparent bg-transparent text-[var(--text-tertiary)]"
-                }`}
-              >
-                {status || "Ready to read or write."}
-              </div>
+        ) : null}
+        {walletReady && protocolInitialized && nullifierSetInitialized === false ? (
+          <div className="flex items-center justify-between rounded-md border border-[var(--brand-light-green)]/40 bg-[var(--brand-light-dark-green)]/20 px-4 py-3 text-xs text-[var(--text-primary)]">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="size-4 text-[var(--brand-green)]" />
+              <span>Nullifier set must be initialized once before withdrawals.</span>
             </div>
-
-            <div className="space-y-4">
-              <Card variant="subtleGreen" className="border border-[var(--brand-light-green)]/25">
-                <CardContent className="space-y-2">
-                  <div className="text-xs uppercase tracking-[0.14em] text-[var(--text-tertiary)]">Capacity check</div>
-                  {jsonSizing.ok ? (
-                    <div className="space-y-1">
-                      <div className="flex items-center justify-between text-sm">
-                        <span>Fits tag</span>
-                        <span className={jsonSizing.fits ? "text-[var(--text-brand-green)]" : "text-destructive"}>
-                          {jsonSizing.fits ? "Yes" : "Too large"}
-                        </span>
-                      </div>
-                      <div className="text-xs text-[var(--text-tertiary)]">
-                        TLV length {jsonSizing.tlvLen} bytes · NDEF {jsonSizing.ndefLen} bytes
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-sm text-destructive">Invalid JSON</div>
-                  )}
-                </CardContent>
-              </Card>
-
-              {lastRead ? (
-                <Card variant="dark" className="border border-[var(--brand-light-green)]/20">
-                  <CardContent className="space-y-3">
-                    <div className="grid gap-3 text-sm md:grid-cols-2">
-                      <div className="space-y-1">
-                        <div className="text-xs text-[var(--text-tertiary)]">UID</div>
-                        <div className="font-mono text-[13px]">{lastRead.uid ?? "(unknown)"}</div>
-                      </div>
-                      <div className="space-y-1">
-                        <div className="text-xs text-[var(--text-tertiary)]">Blank</div>
-                        <div>{String(lastRead.is_blank)}</div>
-                      </div>
-                      <div className="md:col-span-2 space-y-1">
-                        <div className="text-xs text-[var(--text-tertiary)]">NDEF</div>
-                        <div className="font-mono text-[13px]">
-                          {lastRead.ndef
-                            ? lastRead.ndef.kind === "json"
-                              ? `json (${(lastRead.ndef.json ?? "").length} chars)`
-                              : `${lastRead.ndef.kind} ${lastRead.ndef.text ?? lastRead.ndef.uri ?? ""}`
-                            : "(none)"}
-                        </div>
-                      </div>
-                    </div>
-                    {lastRead.ndef?.kind === "json" && lastRead.ndef.json ? (
-                      <div className="space-y-2">
-                        <div className="text-xs text-[var(--text-tertiary)]">Decoded JSON (from tag)</div>
-                        <pre className="scrollbar-thin-brand max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-[var(--brand-light-green)]/20 bg-black/40 p-3 font-mono text-[12px]">
-                          {lastReadJsonFmt?.pretty ?? lastRead.ndef.json}
-                        </pre>
-                        {lastReadJsonFmt?.error ? (
-                          <div className="text-xs text-destructive">Parse error: {lastReadJsonFmt.error}</div>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </CardContent>
-                </Card>
-              ) : (
-                <Card variant="ghost" className="border border-dashed border-[var(--brand-light-green)]/30">
-                  <CardContent className="text-sm text-[var(--text-tertiary)]">
-                    No tag scanned yet. Tap a tag to preview its NDEF summary here.
-                  </CardContent>
-                </Card>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      </main>
-
-      {overwritePrompt ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <button
-            type="button"
-            className="absolute inset-0 bg-black/50"
-            aria-label="Close overwrite dialog"
-            onClick={() => resolveOverwriteConfirm(false)}
-          />
-          <div className="relative w-full max-w-md rounded-xl border border-[var(--brand-light-green)]/30 bg-[var(--background)] p-5 shadow-lg">
-            <div className="space-y-2">
-              <div className="text-lg font-semibold text-[var(--text-primary)]">Overwrite tag?</div>
-              <div className="text-sm text-[var(--text-tertiary)]">
-                This tag (<span className="font-mono text-[var(--text-primary)]">{overwritePrompt.uid}</span>) already
-                contains <span className="font-mono text-[var(--text-primary)]">{overwritePrompt.kind}</span> data.
-                Overwriting will replace it.
-              </div>
-            </div>
-            <div className="mt-5 flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => resolveOverwriteConfirm(false)}>
-                Cancel
-              </Button>
-              <Button variant="destructive" onClick={() => resolveOverwriteConfirm(true)}>
-                Overwrite
+            <Button size="sm" variant="outline" disabled={loading} onClick={initializeNullifierSet} expand>
+              {loading ? "Initializing..." : "Initialize nullifier set"}
               </Button>
             </div>
-          </div>
-        </div>
-      ) : null}
+        ) : null}
+      </section>
+
+      <OverwriteConfirmModal
+        open={showOverwriteModal}
+        onOpenChange={setShowOverwriteModal}
+        currentTagJson={readJson.data?.ndef?.kind === "json" ? readJson.data.ndef.json : null}
+        pendingNote={pendingNote}
+        onCancel={() => {
+          setShowOverwriteModal(false);
+          setPendingNote(null);
+          pushStatus("Cancelled overwrite.");
+        }}
+        onConfirm={async () => {
+          if (pendingNote) {
+            setShowOverwriteModal(false);
+            setPendingNote(null);
+            await performWrite(pendingNote);
+          } else {
+            setShowOverwriteModal(false);
+            setPendingNote(null);
+          }
+        }}
+      />
+
+      <VoucherDetailModal
+        voucher={detailVoucher}
+        open={showDetailModal}
+        onOpenChange={setShowDetailModal}
+      />
     </div>
   );
 }

@@ -13,8 +13,11 @@
     "windows": [
       {
         "title": "desk_tauri",
-        "width": 800,
-        "height": 600
+        "width": 1420,
+        "height": 880,
+        "decorations": false,
+        "maximized": true,
+        "resizable": true
       }
     ],
     "security": {
