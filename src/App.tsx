@@ -11,14 +11,14 @@ import OverwriteConfirmModal from "@/components/OverwriteConfirmModal";
 import VoucherDetailModal from "@/components/VoucherDetailModal";
 import VoucherPanel from "@/components/offline-cash/VoucherPanel";
 import HardwarePanel from "@/components/offline-cash/HardwarePanel";
-import { createMockPrivateCashVouchers, type PrivateCashVoucherTile, buildVoucher } from "@/lib/voucher";
+import { type PrivateCashVoucherTile, buildVoucher } from "@/lib/voucher";
 import { prettyJson } from "@/lib/utils";
 import { IMPORT_DEBOUNCE_MS, NULLIFIER_INIT_DELAY_MS, PROTOCOL_INIT_DELAY_MS } from "@/lib/constants";
 
 function App() {
   const [jsonText, setJsonText] = useState('{"hello":"ntag216"}');
 
-  const [voucherTiles, setVoucherTiles] = useState<PrivateCashVoucherTile[]>(() => createMockPrivateCashVouchers());
+  const [voucherTiles, setVoucherTiles] = useState<PrivateCashVoucherTile[]>([]);
   const [voucherLoading, setVoucherLoading] = useState(false);
   const [hasScannedVouchers, setHasScannedVouchers] = useState(false);
   const assetFileInputRef = useRef<HTMLInputElement>(null);
