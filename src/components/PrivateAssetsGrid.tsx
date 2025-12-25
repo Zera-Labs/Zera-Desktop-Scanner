@@ -3,7 +3,7 @@ import * as React from 'react'
 import { Card } from '@/components/ui/card'
 import PrivateAssetCard from '@/components/PrivateAssetCard'
 import { DRAG_ACTIVATE_THRESHOLD_PX } from '@/lib/constants'
-import { createMockPrivateCashVouchers, type PrivateCashVoucherTile } from '@/lib/voucher'
+import { type PrivateCashVoucherTile } from '@/lib/voucher'
 
 type PrivateAssetsGridProps = {
   vouchers?: PrivateCashVoucherTile[]
@@ -15,12 +15,12 @@ type PrivateAssetsGridProps = {
 }
 
 export default function PrivateAssetsGrid({ vouchers, selectedNoteId, onSelectNote, onViewDetails, onDragStart, onDragEnd }: PrivateAssetsGridProps) {
-  const initialTiles = React.useMemo<PrivateCashVoucherTile[]>(() => vouchers ?? createMockPrivateCashVouchers(), [vouchers])
+  const initialTiles = React.useMemo<PrivateCashVoucherTile[]>(() => vouchers ?? [], [vouchers])
 
   const [tiles, setTiles] = React.useState(initialTiles)
 
   React.useEffect(() => {
-    if (vouchers) {
+    if (vouchers !== undefined) {
       setTiles(vouchers)
     }
   }, [vouchers])
@@ -193,8 +193,15 @@ export default function PrivateAssetsGrid({ vouchers, selectedNoteId, onSelectNo
           )
         })}
         {tiles.length === 0 ? (
-          <div className="w-full rounded-xl border border-dashed border-white/20 bg-white/0 p-6 text-center text-xs text-[var(--text-tertiary)]">
-            Select a folder that contains voucher files to see them displayed here.
+          <div className="w-full rounded-xl border border-dashed border-white/20 bg-white/0 p-8 text-center">
+            <div className="flex flex-col items-center gap-3">
+              <p className="text-sm font-medium text-[var(--text-primary)]">
+                No private assets found
+              </p>
+              <p className="text-xs text-[var(--text-tertiary)] max-w-md">
+                Scan for voucher files in your Downloads folder to see them displayed here.
+              </p>
+            </div>
           </div>
         ) : null}
       </div>
