@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import PrivateAssetCard from "@/components/PrivateAssetCard";
+import { isMobilePlatform } from "@/lib/platform";
 
 interface Note {
   id: string;
@@ -33,9 +34,14 @@ export default function OverwriteConfirmModal({
   onCancel,
   onConfirm,
 }: OverwriteConfirmModalProps) {
+  const descriptionId = "overwrite-tag-description";
+  const isMobile = isMobilePlatform();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!w-[32rem] max-w-[90vw] p-0">
+      <DialogContent
+        className="!w-[32rem] max-w-[90vw] p-0"
+        aria-describedby={descriptionId}
+      >
         <DialogHeader className="px-6 pt-6 pb-4 border-b border-[var(--brand-light-green)]/10">
           <div className="flex items-center justify-between w-full gap-4">
             <div className="flex items-center gap-3">
@@ -48,14 +54,17 @@ export default function OverwriteConfirmModal({
             </div>
             <button
               onClick={() => onOpenChange(false)}
-              className="p-2 rounded-lg hover:bg-[var(--brand-light-dark-green)] transition-colors"
+              className={`rounded-lg hover:bg-[var(--brand-light-dark-green)] transition-colors ${
+                isMobile ? "h-11 w-11 grid place-items-center" : "p-2"
+              }`}
+              aria-label="Close overwrite confirmation"
             >
               <X className="size-5 text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" />
             </button>
           </div>
         </DialogHeader>
         
-        <div className="px-6 py-6 space-y-4">
+        <div className="px-6 py-6 space-y-4" id={descriptionId}>
           <p className="text-sm pb-6 text-[var(--text-tertiary)]">
             This tag already has content. Do you want to overwrite it with the new note?
           </p>

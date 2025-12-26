@@ -32,9 +32,11 @@ type HardwarePanelProps = {
   onMouseLeave: () => void;
   onMouseUp: () => void;
   statusHistory: string[];
+  isMobile: boolean;
 };
 
 export default function HardwarePanel({
+  isMobile,
   readerLoading,
   readerError,
   readerStatus,
@@ -58,12 +60,19 @@ export default function HardwarePanel({
   onMouseUp,
   statusHistory,
 }: HardwarePanelProps) {
+  const nfcSupported = !isMobile;
+
   return (
     <Card variant="darkSolidGrey" className="border border-[var(--brand-light-green)]/25 min-h-[540px]">
       <CardHeader>
         <CardTitle className="text-[16px] font-normal">Hardware</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4 select-none">
+        {isMobile && (
+          <div className="rounded-lg border border-[var(--brand-light-green)]/30 bg-[var(--brand-light-dark-green)]/40 px-3 py-2 text-xs text-[var(--text-tertiary)]">
+            read/write actions are disabled in this mobile build.
+          </div>
+        )}
         <ReaderStatus
           readerLoading={readerLoading}
           readerError={readerError}
@@ -78,7 +87,7 @@ export default function HardwarePanel({
             <Button
               variant="greenTint"
               onClick={onReadJson}
-              disabled={!canRead}
+              disabled={!canRead || !nfcSupported}
               className="w-full gap-1.5 text-[var(--brand-green-50)] text-[12px] h-[40px] rounded-[12px]"
             >
               <ScanText className="size-6" />

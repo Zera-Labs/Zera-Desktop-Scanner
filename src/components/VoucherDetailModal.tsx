@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/dialog";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { type PrivateCashVoucherTile } from "@/lib/voucher";
+import { isMobilePlatform } from "@/lib/platform";
 
 interface VoucherDetailModalProps {
   voucher: PrivateCashVoucherTile | null;
@@ -21,9 +22,15 @@ export default function VoucherDetailModal({
 }: VoucherDetailModalProps) {
   if (!voucher) return null;
 
+  const descriptionId = "voucher-detail-description";
+  const isMobile = isMobilePlatform();
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="!w-[48rem] max-w-[90vw] max-h-[85vh] overflow-hidden flex flex-col p-0">
+      <DialogContent
+        className="!w-[48rem] max-w-[90vw] max-h-[85vh] overflow-hidden flex flex-col p-0"
+        aria-describedby={descriptionId}
+      >
         <DialogHeader className="px-6 pt-6 pb-4 border-b border-[var(--brand-light-green)]/10 flex-shrink-0">
           <div className="flex items-center justify-between w-full gap-4">
             <div className="flex items-center gap-3">
@@ -36,14 +43,20 @@ export default function VoucherDetailModal({
             </div>
             <button
               onClick={() => onOpenChange(false)}
-              className="p-2 rounded-lg hover:bg-[var(--brand-light-dark-green)] transition-colors"
+              className={`rounded-lg hover:bg-[var(--brand-light-dark-green)] transition-colors ${
+                isMobile ? "h-11 w-11 grid place-items-center" : "p-2"
+              }`}
+              aria-label="Close voucher details"
             >
               <X className="size-5 text-[var(--text-tertiary)] hover:text-[var(--text-primary)]" />
             </button>
           </div>
         </DialogHeader>
 
-        <div className="space-y-6 overflow-y-auto px-6 py-6 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:hover:bg-white/30">
+        <div
+          className="space-y-6 overflow-y-auto px-6 py-6 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:hover:bg-white/30"
+          id={descriptionId}
+        >
           {/* Amount Highlight */}
           <Card variant="darkSolidGrey" className="py-6 px-4 gap-3">
             <CardHeader className="px-0 pb-2 text-center">

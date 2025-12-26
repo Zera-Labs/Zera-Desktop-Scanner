@@ -1,6 +1,7 @@
 import { Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import PrivateAssetCard from "@/components/PrivateAssetCard";
+import { isMobilePlatform } from "@/lib/platform";
 
 interface Note {
   id: string;
@@ -38,6 +39,7 @@ export default function WriteZone({
   onMouseLeave,
   onMouseUp,
 }: WriteZoneProps) {
+  const isMobile = isMobilePlatform();
   return (
     <div className="space-y-2">
       <div className="text-xs uppercase tracking-[0.14em] text-[var(--text-tertiary)]">Write zone</div>
@@ -54,6 +56,11 @@ export default function WriteZone({
         onMouseMove={onMouseMove}
         onMouseLeave={onMouseLeave}
         onMouseUp={onMouseUp}
+        onTouchEnd={(e) => {
+          // On mobile, tapping the write zone when dragging isn't available should stage via onMouseUp handler.
+          e.preventDefault();
+          onMouseUp();
+        }}
       >
         {stagedNote ? (
           <div className="space-y-6">

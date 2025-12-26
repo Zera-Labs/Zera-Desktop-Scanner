@@ -14,9 +14,11 @@ import HardwarePanel from "@/components/offline-cash/HardwarePanel";
 import { type PrivateCashVoucherTile, buildVoucher } from "@/lib/voucher";
 import { prettyJson } from "@/lib/utils";
 import { IMPORT_DEBOUNCE_MS, NULLIFIER_INIT_DELAY_MS, PROTOCOL_INIT_DELAY_MS } from "@/lib/constants";
+import { isMobilePlatform } from "@/lib/platform";
 
 function App() {
   const [jsonText, setJsonText] = useState('{"hello":"ntag216"}');
+  const isMobile = isMobilePlatform();
 
   const [voucherTiles, setVoucherTiles] = useState<PrivateCashVoucherTile[]>([]);
   const [voucherLoading, setVoucherLoading] = useState(false);
@@ -57,8 +59,8 @@ function App() {
   } = useNtag216Json();
 
   const busy = isBusy;
-  const canRead = !busy;
-  const canWrite = !busy && Boolean(jsonText.trim());
+  const canRead = !busy && !isMobile;
+  const canWrite = !busy && Boolean(jsonText.trim()) && !isMobile;
   const lastImportTsRef = useRef(0);
 
   const claimImportSlot = (hasFiles: boolean) => {
@@ -72,18 +74,21 @@ function App() {
   };
 
   const handleWindowDragOverReact = (event: DragEvent<HTMLDivElement>) => {
+    if (isMobile) return;
     event.preventDefault();
     event.stopPropagation();
     setIsImportDragOver(true);
   };
 
   const handleWindowDragLeaveReact = (event: DragEvent<HTMLDivElement>) => {
+    if (isMobile) return;
     event.preventDefault();
     event.stopPropagation();
     setIsImportDragOver(false);
   };
 
   const handleWindowDropReact = async (event: DragEvent<HTMLDivElement>) => {
+    if (isMobile) return;
     event.preventDefault();
     event.stopPropagation();
     setIsImportDragOver(false);
@@ -92,6 +97,10 @@ function App() {
 
 
   useEffect(() => {
+    if (isMobile) {
+      return;
+    }
+
     if (assetDirectoryInputRef.current) {
       assetDirectoryInputRef.current.setAttribute("webkitdirectory", "true");
       assetDirectoryInputRef.current.setAttribute("directory", "true");
@@ -128,7 +137,7 @@ function App() {
         unlistenFileDrop();
       }
     };
-  }, []);
+  }, [isMobile]);
 
   async function handleReadJson() {
     if (!canRead) return;
@@ -212,6 +221,11 @@ function App() {
   }
 
   async function handleFilePathImport(paths: string[]) {
+    if (isMobile) {
+      pushStatus("Use Choose files on mobile to import vouchers.");
+      return;
+    }
+
     const jsonPaths = paths.filter((p) => p.toLowerCase().endsWith(".json"));
 
     if (jsonPaths.length === 0) {
@@ -252,6 +266,10 @@ function App() {
 
   async function handleDataTransferImport(dataTransfer: DataTransfer | null) {
     if (!dataTransfer) return;
+    if (isMobile) {
+      pushStatus("Use Choose files on mobile to import vouchers.");
+      return;
+    }
     const files = Array.from(dataTransfer.files ?? []).filter((file) =>
       file.name.toLowerCase().endsWith(".json")
     );
@@ -284,10 +302,15 @@ function App() {
   }
 
   function handleLocateAssets() {
+    if (isMobile) {
+      pushStatus("Folder selection is unavailable on mobile. Use Choose files instead.");
+      return;
+    }
     assetDirectoryInputRef.current?.click();
   }
 
   function handleImportDragOver(event: DragEvent<HTMLDivElement>) {
+    if (isMobile) return;
     event.preventDefault();
     event.stopPropagation();
     if (event.dataTransfer?.types.includes("Files")) {
@@ -296,12 +319,14 @@ function App() {
   }
 
   function handleImportDragLeave(event: DragEvent<HTMLDivElement>) {
+    if (isMobile) return;
     event.preventDefault();
     event.stopPropagation();
     setIsImportDragOver(false);
   }
 
   async function handleImportDrop(event: DragEvent<HTMLDivElement>) {
+    if (isMobile) return;
     event.preventDefault();
     event.stopPropagation();
     setIsImportDragOver(false);
@@ -601,6 +626,7 @@ function App() {
           onAssetFilesSelected={handleAssetFilesSelected}
         />
         <HardwarePanel
+          isMobile={isMobile}
           readerLoading={readerLoading}
           readerError={readerError}
           readerStatus={readerStatus}
