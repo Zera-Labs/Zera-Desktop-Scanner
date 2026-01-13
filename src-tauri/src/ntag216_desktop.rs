@@ -180,16 +180,25 @@ impl DesktopNfcReader {
             .map_err(|e| NfcError::ConnectionFailed(format!("Invalid reader name: {}", e)))?;
 
         // Connect to the card and store the connection
-        let card = ctx
-            .connect(
+        // Note: For some readers, connecting with ShareMode::Shared might fail if no card is present.
+        // However, we need to connect to the context to send commands.
+        // We'll try Direct mode first if we just want to talk to the reader, but for tag ops we need Shared.
+        // For ACR122U/ACR1252U, Shared mode usually waits for a card or fails if none.
+        // The error "The operation requires a Smart Card" comes from here when no tag is present.
+        let card = match ctx.connect(
                 &reader_cstr,
                 ShareMode::Shared,
                 pcsc::Protocols::T0 | pcsc::Protocols::T1,
-            )
-            .map_err(|e| {
-                dlog!("auto_connect: ERROR connecting to card: {}", e);
-                NfcError::ConnectionFailed(e.to_string())
-            })?;
+            ) {
+                Ok(c) => c,
+                Err(e) => {
+                    // If we can't connect (e.g. no card), we can't perform tag operations.
+                    // But we might still want to return the reader handle for diagnostics?
+                    // For now, let's treat "no card" as a specific error we can handle upstream
+                    dlog!("auto_connect: ERROR connecting to card: {}", e);
+                    return Err(NfcError::ConnectionFailed(e.to_string()));
+                }
+            };
 
         Ok(DesktopNfcReader {
             card,
@@ -244,17 +253,56 @@ impl DesktopNfcReader {
     /// Read UID from tag
     pub fn read_uid(&self) -> Result<String, NfcError> {
         // send_apdu now returns data without status bytes (already validated)
-        let uid_data = self.send_apdu(&APDU_GET_UID)?;
-
-        // UID is typically 4 or 7 bytes (NTAG216 uses 7 bytes)
-        if uid_data.is_empty() {
-            return Err(NfcError::UidReadFailed("UID response empty".into()));
+        // Try standard Get UID command first (FF CA 00 00 00)
+        // This works on ACR1252U and many other readers
+        match self.send_apdu(&APDU_GET_UID) {
+            Ok(uid_data) => {
+                if !uid_data.is_empty() {
+                    // UID is typically 4 or 7 bytes (NTAG216 uses 7 bytes)
+                    let uid_len = uid_data.len().min(7);
+                    let uid_bytes = &uid_data[..uid_len];
+                    return Ok(bytes_to_hex(uid_bytes, " "));
+                }
+            },
+            Err(_) => {
+                dlog!("read_uid: Standard Get UID failed, trying ACR122U specific command...");
+            }
         }
 
-        // Extract UID bytes (typically 7 bytes for NTAG216)
-        let uid_len = uid_data.len().min(7);
-        let uid_bytes = &uid_data[..uid_len];
-        Ok(bytes_to_hex(uid_bytes, " "))
+        // Fallback for ACR122U: It wraps PN532 commands
+        // Command: FF 00 00 00 04 D4 4A 01 00 (InListPassiveTarget)
+        // D4 = PN532 Command
+        // 4A = InListPassiveTarget
+        // 01 = Max targets
+        // 00 = Baud rate (106 kbps type A)
+        let acr122u_uid_cmd = vec![
+            0xFF, 0x00, 0x00, 0x00, 0x04, // Header
+            0xD4, 0x4A, 0x01, 0x00        // PN532 command
+        ];
+
+        let response = self.send_apdu(&acr122u_uid_cmd)?;
+        
+        // Response format for ACR122U/PN532:
+        // D5 4B NbTg [Tg 1 Data] ...
+        // Tg 1 Data: [Tg] [SENS_RES(2)] [SEL_RES(1)] [NFCIDLength(1)] [NFCID(N)] [ATS(M)]
+        
+        if response.len() >= 10 && response[0] == 0xD5 && response[1] == 0x4B {
+            let nb_tg = response[2];
+            if nb_tg > 0 {
+                // Target 1 data starts at index 3
+                // index 3: Tg number
+                // index 4-5: SENS_RES
+                // index 6: SEL_RES
+                // index 7: NFCID Length
+                let nfcid_len = response[7] as usize;
+                if response.len() >= 8 + nfcid_len {
+                    let uid_bytes = &response[8..8 + nfcid_len];
+                    return Ok(bytes_to_hex(uid_bytes, " "));
+                }
+            }
+        }
+
+        Err(NfcError::UidReadFailed("Could not parse UID from any known response format".into()))
     }
 
     /// Read pages from NTAG216
@@ -264,53 +312,58 @@ impl DesktopNfcReader {
 
         for page in start..=end {
             dlog!("Reading page {}...", page);
-            // Try ACR1252U direct format first (FF B0 00 <page> 04)
-            // ACR1252U supports direct native commands without Direct Transmit wrapper
+            
+            // For ACR122U, we should try the wrapped command first or have a more robust fallback logic.
+            // But first, let's try the direct command (FF B0...) which works on ACR1252U
             let cmd = vec![0xFF, 0xB0, 0x00, page as u8, 0x04];
             
             let response = match self.send_apdu(&cmd) {
                 Ok(r) => r,
-                Err(_) => {
-                    // Fallback to ACR122U Direct Transmit format
-                    let mut cmd_dt = Vec::with_capacity(9);
+                Err(e) => {
+                    dlog!("  Direct read failed ({}), trying ACR122U wrapped command...", e);
+                    // Fallback to ACR122U Direct Transmit format (Pn532 InDataExchange)
+                    // FF 00 00 00 05 D4 40 01 30 <page>
+                    let mut cmd_dt = Vec::with_capacity(10);
                     cmd_dt.extend_from_slice(&APDU_DIRECT_TRANSMIT);
-                    cmd_dt.push(0x05);
+                    cmd_dt.push(0x05); // Length of PN532 command (D4 40 01 30 <page>)
                     cmd_dt.extend_from_slice(&PN532_INDATAEXCHANGE);
-                    cmd_dt.push(NTAG216_READ_CMD);
+                    cmd_dt.push(NTAG216_READ_CMD); // 0x30
                     cmd_dt.push(page as u8);
+                    
                     self.send_apdu(&cmd_dt)?
                 }
             };
 
-            // send_apdu now returns data without status bytes (already validated)
-            // Parse response - handle both ACR1252U direct format and ACR122U Direct Transmit
-            // ACR1252U: <4 bytes data> (status already stripped)
-            // ACR122U: D5 41 00 <4 bytes data> (status already stripped)
-            
+            // Parse response
             let mut page_data = [0u8; 4];
             let mut found_data = false;
 
-            // ACR1252U direct format: exactly 4 bytes
+            // ACR1252U direct format: exactly 4 bytes (status stripped by send_apdu)
             if response.len() == 4 {
                 dlog!("  Parsing as ACR1252U direct format (4 bytes)");
                 page_data.copy_from_slice(&response[0..4]);
                 found_data = true;
             }
-            // ACR122U Direct Transmit: D5 41 00 <4 bytes>
+            // ACR122U / PN532 response: D5 41 00 <4 bytes data>
+            // Note: send_apdu might have stripped the SW1 SW2 (90 00) from the end, 
+            // but the PN532 response body remains.
             else if response.len() >= 7 && response[0] == 0xD5 && response[1] == 0x41 {
-                dlog!("  Parsing as ACR122U Direct Transmit format (7+ bytes)");
-                if response[2] == 0x00 {
-                    page_data.copy_from_slice(&response[3..7]);
-                    found_data = true;
+                dlog!("  Parsing as ACR122U Direct Transmit format");
+                if response[2] == 0x00 { // Status OK
+                    if response.len() >= 7 {
+                        page_data.copy_from_slice(&response[3..7]);
+                        found_data = true;
+                    }
                 } else {
                     dlog!("  ERROR: PN532 status not 0x00: {:02X}", response[2]);
                 }
             }
-            // Fallback: try to extract last 4 bytes
+            // Fallback: If we have at least 4 bytes, take the last 4.
+            // This is a heuristic for when headers vary.
             else if response.len() >= 4 {
-                dlog!("  Parsing as fallback format (extracting last 4 bytes)");
+                dlog!("  Parsing as fallback (taking last 4 bytes)");
                 let start = response.len() - 4;
-                page_data.copy_from_slice(&response[start..start + 4]);
+                page_data.copy_from_slice(&response[start..start+4]);
                 found_data = true;
             }
 
@@ -371,11 +424,12 @@ impl DesktopNfcReader {
                 Err(e) => {
                     dlog!("  Direct format error: {}, trying fallback", e);
                     // Fallback to ACR122U Direct Transmit format
-                    let mut cmd_dt = Vec::with_capacity(13);
+                    // FF 00 00 00 09 D4 40 01 A2 <page> <data*4>
+                    let mut cmd_dt = Vec::with_capacity(14);
                     cmd_dt.extend_from_slice(&APDU_DIRECT_TRANSMIT);
-                    cmd_dt.push(0x09);
+                    cmd_dt.push(0x09); // Length: D4(1) + 40(1) + 01(1) + A2(1) + Page(1) + Data(4) = 9
                     cmd_dt.extend_from_slice(&PN532_INDATAEXCHANGE);
-                    cmd_dt.push(NTAG216_WRITE_CMD);
+                    cmd_dt.push(NTAG216_WRITE_CMD); // 0xA2
                     cmd_dt.push(page as u8);
                     cmd_dt.extend_from_slice(chunk);
                     dlog!("  Fallback command: {:02X?}", cmd_dt);
@@ -1210,6 +1264,31 @@ pub fn read_ntag216_json_desktop() -> CmdResult<String> {
     }
 }
 
+/// Read raw pages from NTAG216 tag (Debug Mode)
+#[tauri::command]
+pub fn read_ntag216_raw_desktop() -> CmdResult<Vec<String>> {
+    let reader = DesktopNfcReader::auto_connect().map_err(|e| e.to_string())?;
+
+    let _ = reader.read_uid().map_err(|e| e.to_string())?;
+
+    // Read all user pages (4 to 221 for NTAG216)
+    // We read in chunks to avoid timeouts or buffer overflows
+    let mut all_pages = Vec::new();
+    let chunk_size = 16;
+    
+    for start in (NTAG216_FIRST_USER_PAGE..=NTAG216_LAST_USER_PAGE).step_by(chunk_size) {
+        let end = (start + chunk_size as u16 - 1).min(NTAG216_LAST_USER_PAGE);
+        let pages = reader.read_pages(start, end).map_err(|e| e.to_string())?;
+        
+        for (i, page_data) in pages.iter().enumerate() {
+            let page_num = start + i as u16;
+            all_pages.push(format!("Page {}: {:02X?}", page_num, page_data));
+        }
+    }
+
+    Ok(all_pages)
+}
+
 /// Check NFC reader health
 #[tauri::command]
 pub fn check_nfc_reader() -> CmdResult<String> {
@@ -1249,28 +1328,55 @@ pub fn check_nfc_reader() -> CmdResult<String> {
     }
     
     // Try to connect to the first reader
-    match DesktopNfcReader::auto_connect() {
-        Ok(reader) => {
-            match reader.read_uid() {
+    // Note: We don't call auto_connect() here because it requires a card to be present for ShareMode::Shared
+    // We want to just list the readers if possible, or try Direct mode if supported, 
+    // but sticking to standard behavior: if we can't connect, we just report the reader name.
+    
+    // Manual connection attempt logic for check_nfc_reader
+    use std::ffi::CString;
+    let reader_name = &readers_list[0];
+    let reader_cstr = CString::new(reader_name.as_str()).map_err(|e| e.to_string())?;
+
+    // Try to connect in Shared mode (requires card)
+    match ctx.connect(&reader_cstr, pcsc::ShareMode::Shared, pcsc::Protocols::T0 | pcsc::Protocols::T1) {
+        Ok(card) => {
+            // Card is present!
+             // Create a temporary reader to read UID
+             let reader = DesktopNfcReader { card, reader_name: reader_name.clone() };
+             match reader.read_uid() {
                 Ok(uid) => Ok(format!(
                     "✅ Reader working!\n\
                     Reader: {}\n\
                     Tag UID: {}",
-                    readers_list[0], uid
+                    reader_name, uid
                 )),
                 Err(_) => Ok(format!(
                     "✅ Reader connected: {}\n\
-                    Status: Ready (no tag detected - place a tag on the reader)",
-                    readers_list[0]
+                    Status: Card present but UID read failed",
+                    reader_name
                 )),
             }
+        },
+        Err(e) => {
+            // No card or other error. 
+            // If the error is "No Smart Card", that's actually a "Success" for "Reader Found" purposes
+             let err_str = e.to_string();
+             if err_str.contains("no Smart Card") || err_str.contains("Card is absent") || err_str.contains("Removed Card") {
+                 Ok(format!(
+                    "✅ Reader connected: {}\n\
+                    Status: Ready (no tag detected - place a tag on the reader)",
+                    reader_name
+                ))
+             } else {
+                 // Genuine connection error
+                 Err(format!(
+                    "Reader detected but connection failed: {}\n\
+                    Detected readers: {}",
+                    e,
+                    readers_list.join(", ")
+                ))
+             }
         }
-        Err(e) => Err(format!(
-            "Reader detected but connection failed: {}\n\
-            Detected readers: {}",
-            e,
-            readers_list.join(", ")
-        )),
     }
 }
 

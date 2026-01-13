@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 
-const DEMO_MODE = true;
+const DEMO_MODE = false;
 
 // TODO: Parse with zod? Replace with enum?
 export type NdefKind = "text" | "uri" | "json" | "unknown";
@@ -54,9 +54,31 @@ export function useNtag216Json() {
       }
       return invoke<string>("check_nfc_reader");
     },
-    staleTime: 30_000,
+    // Don't auto-refetch too aggressively to avoid flickering if pcscd is flaky
+    staleTime: 5000, 
     refetchOnWindowFocus: false,
     retry: false,
+  });
+
+  const readRawMutation = useMutation<string[], unknown, void>({
+    mutationKey: ["ntag216", "read-raw"],
+    mutationFn: async () => {
+      if (DEMO_MODE) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return ["Page 4: 00 00 00 00", "Page 5: 01 02 03 04"];
+      }
+      return invoke<string[]>("read_ntag216_raw_desktop");
+    },
+    onMutate: () => {
+      pushStatus("Reading raw pages... place tag on reader");
+    },
+    onSuccess: (data) => {
+      pushStatus(`Read ${data.length} pages raw.`);
+      console.log("Raw Read Data:", data);
+    },
+    onError: (err) => {
+      pushStatus(`Raw read error: ${String(err)}`);
+    },
   });
 
   const readMutation = useMutation<Ntag216ReadResult, unknown, { overrideContent?: string } | void>({
@@ -152,6 +174,7 @@ export function useNtag216Json() {
     readerError: readerQuery.error,
     checkReader,
     readJson: readMutation,
+    readRaw: readRawMutation,
     writeJson: writeMutation,
     lastRead,
     status,

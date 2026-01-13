@@ -21,6 +21,7 @@ type HardwarePanelProps = {
   status: string;
   onSaveTagToComputer: () => void;
   onReadJson: () => void;
+  onReadRaw: () => void;
   canRead: boolean;
   stagedNote: PrivateCashVoucherTile | null;
   isDragOver: boolean;
@@ -46,6 +47,7 @@ export default function HardwarePanel({
   status,
   onSaveTagToComputer,
   onReadJson,
+  onReadRaw,
   canRead,
   stagedNote,
   isDragOver,
@@ -75,15 +77,26 @@ export default function HardwarePanel({
 
         <div className="grid gap-2">
           {!isReading && (
-            <Button
-              variant="greenTint"
-              onClick={onReadJson}
-              disabled={!canRead}
-              className="w-full gap-1.5 text-[var(--brand-green-50)] text-[12px] h-[40px] rounded-[12px]"
-            >
-              <ScanText className="size-6" />
-              Read Tag
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="greenTint"
+                onClick={onReadJson}
+                disabled={!canRead}
+                className="flex-1 gap-1.5 text-[var(--brand-green-50)] text-[12px] h-[40px] rounded-[12px]"
+              >
+                <ScanText className="size-6" />
+                Read Tag
+              </Button>
+              <Button
+                variant="outline"
+                onClick={onReadRaw}
+                disabled={!canRead}
+                className="w-[80px] text-[var(--text-secondary)] text-[10px] h-[40px] rounded-[12px] border-[var(--brand-light-green)]/25"
+                title="Debug Mode: Read Raw Pages"
+              >
+                Debug
+              </Button>
+            </div>
           )}
         </div>
 
