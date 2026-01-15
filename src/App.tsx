@@ -47,6 +47,7 @@ function App() {
     readerError,
     checkReader,
     readJson,
+    readRaw,
     writeJson,
     status,
     statusHistory,
@@ -187,6 +188,26 @@ function App() {
     }
   }
 
+  async function handleReadRaw() {
+    if (!canRead) return;
+    try {
+      pushStatus("Reading raw pages for debug...");
+      const pages = await readRaw.mutateAsync();
+      
+      // Also log to console for detailed inspection
+      console.log("RAW TAG DATA DUMP:");
+      pages.forEach(p => console.log(p));
+      
+      // Just show a summary in status
+      pushStatus(`✓ Read ${pages.length} pages raw (check console)`);
+      
+      // Optionally show the first few lines in status or a modal? 
+      // For now, let's just dump to console as requested by "debug mode"
+    } catch (err) {
+      pushStatus(`Raw read failed: ${String(err)}`);
+    }
+  }
+
   async function getFileContent(file: File): Promise<string> {
     try {
       return await file.text();
@@ -314,8 +335,7 @@ function App() {
     setVoucherLoading(true);
     try {
       if (files.length === 0) {
-        setVoucherTiles([]);
-        setHasScannedVouchers(true);
+        // Don't clear existing vouchers if no new ones found, just notify
         pushStatus(
           "No voucher JSON files found or folder access was blocked. If Windows shows 'organization turned off access', try 'Choose files' or drag-and-drop individual JSONs instead."
         );
@@ -323,7 +343,11 @@ function App() {
       }
 
       const loaded = await loadVoucherFiles(files);
-      setVoucherTiles(loaded);
+      setVoucherTiles((prev) => {
+        const existingIds = new Set(prev.map((v) => v.id));
+        const incoming = loaded.filter((v) => !existingIds.has(v.id));
+        return [...prev, ...incoming];
+      });
       setHasScannedVouchers(true);
       pushStatus(
         loaded.length
@@ -350,7 +374,11 @@ function App() {
       }
 
       const loaded = await loadVoucherFiles(files);
-      setVoucherTiles(loaded);
+      setVoucherTiles((prev) => {
+        const existingIds = new Set(prev.map((v) => v.id));
+        const incoming = loaded.filter((v) => !existingIds.has(v.id));
+        return [...prev, ...incoming];
+      });
       setHasScannedVouchers(true);
       pushStatus(`Loaded ${loaded.length} file(s) into vouchers.`);
     } catch (err) {
@@ -484,8 +512,12 @@ function App() {
   }
 
   useEffect(() => {
+    // Only check once on mount, or when specifically requested.
+    // The previous auto-check logic might have been causing the loop if checkReader changes.
+    // We'll rely on the user or specific actions to trigger checks to avoid the infinite loop.
     void checkReader();
-  }, [checkReader]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Remove checkReader from deps to prevent loop
 
   useEffect(() => {
     const handleGlobalMouseUp = () => {
@@ -612,6 +644,7 @@ function App() {
           status={status}
           onSaveTagToComputer={() => void handleSaveTagToComputer()}
           onReadJson={handleReadJson}
+          onReadRaw={handleReadRaw}
           canRead={canRead}
           stagedNote={stagedNote}
           isDragOver={isDragOver}

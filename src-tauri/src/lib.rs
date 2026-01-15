@@ -15,6 +15,9 @@ fn read_file_text(path: &str) -> Result<String, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+
+    std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    println!("Running Tauri application");
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
@@ -35,6 +38,7 @@ pub fn run() {
             // Desktop NFC commands (PC/SC)
             ntag216_desktop::read_ntag216_desktop,
             ntag216_desktop::read_ntag216_json_desktop,
+            ntag216_desktop::read_ntag216_raw_desktop,
             ntag216_desktop::write_ntag216_text_desktop,
             ntag216_desktop::write_ntag216_uri_desktop,
             ntag216_desktop::write_ntag216_json_desktop,
