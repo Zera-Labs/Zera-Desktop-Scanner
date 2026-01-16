@@ -1,14 +1,10 @@
-import { Download } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import PrivateAssetCard from "@/components/PrivateAssetCard";
 
 interface TagContentPreviewProps {
   json: string;
-  busy: boolean;
-  onSave: () => void;
 }
 
-export default function TagContentPreview({ json, busy, onSave }: TagContentPreviewProps) {
+export default function TagContentPreview({ json }: TagContentPreviewProps) {
   try {
     const parsed = JSON.parse(json);
     return (

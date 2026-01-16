@@ -487,29 +487,6 @@ function App() {
     }
   }
 
-  async function handleSaveTagToComputer() {
-    if (!readJson.data?.ndef?.json) {
-      pushStatus("No JSON data on tag to save.");
-      return;
-    }
-
-    try {
-      const parsed = JSON.parse(readJson.data.ndef.json);
-      const newVoucher: PrivateCashVoucherTile = {
-        ...parsed,
-        id: parsed.id || `note_${readJson.data.uid || Date.now()}`
-      };
-      const exists = voucherTiles.some(v => v.id === newVoucher.id);
-      if (!exists) {
-        setVoucherTiles(prev => [...prev, newVoucher]);
-        pushStatus("✓ Note saved to computer storage!");
-      } else {
-        pushStatus("✓ Note already exists in collection.");
-      }
-    } catch (err) {
-      pushStatus(`Save error: ${String(err)}`);
-    }
-  }
 
   useEffect(() => {
     // Only check once on mount, or when specifically requested.
@@ -642,7 +619,6 @@ function App() {
           isReading={isReading}
           isWriting={isWriting}
           status={status}
-          onSaveTagToComputer={() => void handleSaveTagToComputer()}
           onReadJson={handleReadJson}
           onReadRaw={handleReadRaw}
           canRead={canRead}

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "desk_tauri",
+  "productName": "Zera Desktop",
   "version": "0.1.0",
-  "identifier": "com.dax.desk_tauri",
+  "identifier": "com.dax.desk-tauri",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "desk_tauri",
+        "title": "Zera Desktop",
         "width": 1420,
         "height": 880,
         "decorations": false,
@@ -33,6 +33,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "Developer ID Application: Hayden Porter-Aylor (9HD4Q82U58)"
+    }
   }
 }
