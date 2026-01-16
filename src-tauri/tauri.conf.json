@@ -15,7 +15,8 @@
         "title": "desk_tauri",
         "width": 1420,
         "height": 880,
-        "decorations": false,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
         "maximized": true,
         "resizable": true
       }
