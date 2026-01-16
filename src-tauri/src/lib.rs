@@ -13,6 +13,56 @@ fn read_file_text(path: &str) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|e| format!("Read failed: {e}"))
 }
 
+#[derive(serde::Serialize)]
+struct SaveVoucherResult {
+    path: String,
+    already_existed: bool,
+}
+
+#[tauri::command]
+fn save_voucher_to_downloads(voucher_id: &str, content: &str) -> Result<SaveVoucherResult, String> {
+    let downloads_dir = dirs::download_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
+        .ok_or_else(|| "Could not find Downloads folder".to_string())?;
+    
+    let safe_id: String = voucher_id
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .take(20)
+        .collect();
+    
+    if safe_id.is_empty() {
+        return Err("Invalid voucher ID".to_string());
+    }
+    
+    let prefix = format!("voucher_{}", safe_id);
+    if let Ok(entries) = std::fs::read_dir(&downloads_dir) {
+        for entry in entries.flatten() {
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            if file_name.starts_with(&prefix) && file_name.ends_with(".json") {
+                return Ok(SaveVoucherResult {
+                    path: entry.path().to_string_lossy().to_string(),
+                    already_existed: true,
+                });
+            }
+        }
+    }
+    let filename = format!("voucher_{}_{}.json", safe_id, std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis());
+    
+    let file_path = downloads_dir.join(&filename);
+    
+    std::fs::write(&file_path, content)
+        .map_err(|e| format!("Failed to save file: {e}"))?;
+    
+    Ok(SaveVoucherResult {
+        path: file_path.to_string_lossy().to_string(),
+        already_existed: false,
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
 
@@ -23,6 +73,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             read_file_text,
+            save_voucher_to_downloads,
             serial::list_serial_ports,
             serial::auto_detect_proxmark_port,
             // Proxmark3 commands (legacy)

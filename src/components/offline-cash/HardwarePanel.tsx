@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { type PrivateCashVoucherTile } from "@/lib/voucher";
 
+const SHOW_DEBUG_BUTTON = false;
+
 type HardwarePanelProps = {
   readerLoading: boolean;
   readerError?: unknown;
@@ -87,15 +89,17 @@ export default function HardwarePanel({
                 <ScanText className="size-6" />
                 Read Tag
               </Button>
-              <Button
-                variant="outline"
-                onClick={onReadRaw}
-                disabled={!canRead}
-                className="w-[80px] text-[var(--text-secondary)] text-[10px] h-[40px] rounded-[12px] border-[var(--brand-light-green)]/25"
-                title="Debug Mode: Read Raw Pages"
-              >
-                Debug
-              </Button>
+              {SHOW_DEBUG_BUTTON && (
+                <Button
+                  variant="outline"
+                  onClick={onReadRaw}
+                  disabled={!canRead}
+                  className="w-[80px] text-[var(--text-secondary)] text-[10px] h-[40px] rounded-[12px] border-[var(--brand-light-green)]/25"
+                  title="Debug Mode: Read Raw Pages"
+                >
+                  Debug
+                </Button>
+              )}
             </div>
           )}
         </div>

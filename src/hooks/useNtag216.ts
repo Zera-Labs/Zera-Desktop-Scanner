@@ -55,9 +55,81 @@ export function useNtag216Json() {
       return invoke<string>("check_nfc_reader");
     },
     // Don't auto-refetch too aggressively to avoid flickering if pcscd is flaky
-    staleTime: 5000, 
+    staleTime: 5000,
     refetchOnWindowFocus: false,
     retry: false,
+  });
+
+  type SaveVoucherResult = {
+    path: string;
+    already_existed: boolean;
+  };
+
+  const saveToDownloadsMutation = useMutation({
+    mutationKey: ["ntag216", "save-to-downloads"],
+    mutationFn: async ({ voucherId, content }: { voucherId: string; content: object }) => {
+      return invoke<SaveVoucherResult>("save_voucher_to_downloads", {
+        voucherId,
+        content: JSON.stringify(content, null, 2),
+      });
+    },
+    onSuccess: (result) => {
+      const fileName = result.path.split(/[/\\]/).pop();
+      if (result.already_existed) {
+        pushStatus(`✓ Voucher already in Downloads: ${fileName}`);
+      } else {
+        pushStatus(`✓ Saved to Downloads: ${fileName}`);
+      }
+    },
+    onError: (err) => {
+      pushStatus(`Warning: Could not save to Downloads: ${String(err)}`);
+    },
+  });
+
+  const readMutation = useMutation<Ntag216ReadResult, unknown, { overrideContent?: string; autoSave?: boolean } | void>({
+    mutationKey: ["ntag216", "read-json"],
+    mutationFn: async (options) => {
+      if (DEMO_MODE) {
+        await new Promise(resolve => setTimeout(resolve, 800));
+        const cachedContent = queryClient.getQueryData<string | null>(["ntag216", "demo-tag-content"]);
+        const demoVoucher = {
+          id: "demo-1",
+          voucherId: "0x74cccbb7db5be82b7c3d2d36e2cddb25649bd217",
+          amount: 211111111199.99,
+          recipient: "9Y6Aftit2gGPgY6H2DaDH1qnXE6qVhZ6kTpsuRWpuQXy",
+          secret: "0xcb61b3870d94bef96de22653a3fa20b9e8b386b9",
+          salt: "0x1daf0ee216260d49503ea68acb2b45949db4f749",
+          txSignature: "DemoTxSignature123abc456def789",
+          createdAt: new Date().toISOString(),
+        };
+        const content = options?.overrideContent || cachedContent || JSON.stringify(demoVoucher);
+        return {
+          uid: "04:AB:CD:EF:12:34:56",
+          is_blank: false,
+          ndef: { kind: "json" as const, json: content }
+        };
+      }
+      return invoke<Ntag216ReadResult>("read_ntag216_desktop");
+    },
+    onMutate: () => pushStatus("Reading… place tag on NFC reader"),
+    onSuccess: async (res: Ntag216ReadResult, options) => {
+      setLastRead(res);
+      
+      if (res?.ndef?.kind === "json" && res.ndef.json && options?.autoSave !== false) {
+        try {
+          const parsed = JSON.parse(res.ndef.json);
+          const voucherId = parsed.voucherId || parsed.id || res.uid || "unknown";
+          await saveToDownloadsMutation.mutateAsync({ voucherId, content: parsed });
+          return;
+        } catch {
+        }
+      }
+      
+      pushStatus("✓ Read JSON from tag.");
+    },
+    onError: (err: unknown) => {
+      pushStatus(`Error: ${String(err)}`);
+    },
   });
 
   const readRawMutation = useMutation<string[], unknown, void>({
@@ -74,51 +146,9 @@ export function useNtag216Json() {
     },
     onSuccess: (data) => {
       pushStatus(`Read ${data.length} pages raw.`);
-      console.log("Raw Read Data:", data);
     },
     onError: (err) => {
       pushStatus(`Raw read error: ${String(err)}`);
-    },
-  });
-
-  const readMutation = useMutation<Ntag216ReadResult, unknown, { overrideContent?: string } | void>({
-    mutationKey: ["ntag216", "read-json"],
-    mutationFn: async (options) => {
-      if (DEMO_MODE) {
-        await new Promise(resolve => setTimeout(resolve, 800));
-        
-        const cachedContent = queryClient.getQueryData<string | null>(["ntag216", "demo-tag-content"]);
-        const currentContent = options?.overrideContent || cachedContent || JSON.stringify({
-          id: "demo-1",
-          voucherId: "0x74cccbb7db5be82b7c3d2d36e2cddb25649bd217",
-          amount: 211111111199.99,
-          recipient: "9Y6Aftit2gGPgY6H2DaDH1qnXE6qVhZ6kTpsuRWpuQXy",
-          secret: "0xcb61b3870d94bef96de22653a3fa20b9e8b386b9",
-          salt: "0x1daf0ee216260d49503ea68acb2b45949db4f749",
-          txSignature: "DemoTxSignature123abc456def789",
-          createdAt: new Date().toISOString(),
-        });
-        
-        const hasContent = options?.overrideContent || cachedContent;
-        
-        return {
-          uid: "04:AB:CD:EF:12:34:56",
-          is_blank: !hasContent,
-          ndef: hasContent ? {
-            kind: "json",
-            json: currentContent
-          } : null
-        };
-      }
-      return invoke<Ntag216ReadResult>("read_ntag216_desktop");
-    },
-    onMutate: () => pushStatus("Reading… place tag on NFC reader"),
-    onSuccess: (res: Ntag216ReadResult) => {
-      setLastRead(res);
-      pushStatus("Read JSON from tag.");
-    },
-    onError: (err: unknown) => {
-      pushStatus(`Error: ${String(err)}`);
     },
   });
 
@@ -127,7 +157,6 @@ export function useNtag216Json() {
     mutationFn: async ({ json }: WriteJsonInput) => {
       if (DEMO_MODE) {
         await new Promise(resolve => setTimeout(resolve, 1200));
-        
         return {
           uid: "04:AB:CD:EF:12:34:56",
           ok: true,
@@ -147,7 +176,6 @@ export function useNtag216Json() {
       pushStatus("Wrote JSON to tag.");
       
       if (DEMO_MODE) {
-
         queryClient.setQueryData(["ntag216", "demo-tag-content"], variables.json);
       }
       
@@ -184,6 +212,6 @@ export function useNtag216Json() {
     isWriting,
     isBusy,
     pushStatus,
+    saveToDownloads: saveToDownloadsMutation,
   };
 }
-
