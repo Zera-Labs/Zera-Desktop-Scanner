@@ -218,12 +218,19 @@ function App() {
 
   async function loadVoucherFiles(files: File[]): Promise<PrivateCashVoucherTile[]> {
     const loaded: PrivateCashVoucherTile[] = [];
+    const seenVoucherIds = new Set<string>();
 
     for (const file of files) {
       try {
         const content = await getFileContent(file);
-      const parsed = JSON.parse(content);
-      loaded.push(buildVoucher(parsed, file.name));
+        const parsed = JSON.parse(content);
+        const voucher = buildVoucher(parsed, file.name);
+        if (seenVoucherIds.has(voucher.voucherId)) {
+          pushStatus(`Skipping duplicate: ${file.name}`);
+          continue;
+        }
+        seenVoucherIds.add(voucher.voucherId);
+        loaded.push(voucher);
       } catch (err) {
         pushStatus(`Skipping ${file.name}: ${String(err)}`);
       }
@@ -255,7 +262,10 @@ function App() {
       }
       setVoucherTiles((prev) => {
         const existingIds = new Set(prev.map((v) => v.id));
-        const incoming = loaded.filter((v) => !existingIds.has(v.id));
+        const existingVoucherIds = new Set(prev.map((v) => v.voucherId));
+        const incoming = loaded.filter((v) => 
+          !existingIds.has(v.id) && !existingVoucherIds.has(v.voucherId)
+        );
         return [...prev, ...incoming];
       });
       setHasScannedVouchers(true);
@@ -288,7 +298,10 @@ function App() {
       const loaded = await loadVoucherFiles(files);
       setVoucherTiles((prev) => {
         const existingIds = new Set(prev.map((v) => v.id));
-        const incoming = loaded.filter((v) => !existingIds.has(v.id));
+        const existingVoucherIds = new Set(prev.map((v) => v.voucherId));
+        const incoming = loaded.filter((v) => 
+          !existingIds.has(v.id) && !existingVoucherIds.has(v.voucherId)
+        );
         return [...prev, ...incoming];
       });
       setHasScannedVouchers(true);
