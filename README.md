@@ -164,6 +164,12 @@ pnpm tauri build --target x86_64-unknown-linux-gnu  # Linux
 
 Built applications will be in `src-tauri/target/release/bundle/`
 
+### CI / Tag Builds
+- Bump version in both `package.json` and `src-tauri/tauri.conf.json` (e.g., `0.2.0`), then commit.
+- Create and push a tag that starts with `v` (for example `v0.2.0`): `git tag -a v0.2.0 -m "v0.2.0"` and `git push origin v0.2.0`.
+- Tag pushes trigger `.github/workflows/tag-build.yml`, which builds unsigned bundles on `ubuntu-latest`, `macos-latest`, and `windows-latest`, then uploads them as artifacts on the run.
+- Code signing WIP: https://linear.app/zeralabs/issue/ZER-47/code-signing
+
 #### Development Tips
 
 - **Enable Rust Debug Logs**: Set `DESK_TAURI_DEBUG=1` environment variable
