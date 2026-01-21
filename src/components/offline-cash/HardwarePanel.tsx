@@ -16,7 +16,6 @@ type HardwarePanelProps = {
   onCheckReader: () => void;
   tagData: any;
   busy: boolean;
-  isReading: boolean;
   isWriting: boolean;
   status: string;
   onSaveTagToComputer: () => void;
@@ -42,10 +41,8 @@ export default function HardwarePanel({
   onCheckReader,
   tagData,
   busy,
-  isReading,
   isWriting,
   status,
-  onSaveTagToComputer,
   onReadJson,
   onReadRaw,
   canRead,
@@ -76,7 +73,7 @@ export default function HardwarePanel({
         {tagData && <TagStatus tagData={tagData} />}
 
         <div className="grid gap-2">
-          {!isReading && (
+          {!busy && (
             <div className="flex gap-2">
               <Button
                 variant="greenTint"
@@ -101,7 +98,7 @@ export default function HardwarePanel({
         </div>
 
         {tagData?.ndef?.kind === "json" && tagData.ndef.json && (
-          <TagContentPreview json={tagData.ndef.json} busy={busy} onSave={onSaveTagToComputer} />
+          <TagContentPreview json={tagData.ndef.json} />
         )}
 
         <div className="border-t border-[var(--brand-light-green)]/20 my-4"></div>
@@ -118,7 +115,6 @@ export default function HardwarePanel({
           isDragOver={isDragOver}
           isWriting={isWriting}
           busy={busy}
-          isReading={isReading}
           dropZoneRef={dropZoneRef}
           onWrite={onWrite}
           onClear={onClear}
