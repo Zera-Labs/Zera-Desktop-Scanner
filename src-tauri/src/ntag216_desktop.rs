@@ -1264,6 +1264,28 @@ pub fn read_ntag216_json_desktop() -> CmdResult<String> {
     }
 }
 
+#[tauri::command]
+pub fn erase_ntag216_desktop() -> CmdResult<WriteResult> {
+    let reader = DesktopNfcReader::auto_connect().map_err(|e| e.to_string())?;
+
+    let uid = reader.read_uid().ok();
+    let mut blank_data = [0u8; 64];
+    blank_data[0] = 0xFE;
+    
+    reader
+        .write_pages(NTAG216_FIRST_USER_PAGE, &blank_data)
+        .map_err(|e| format!("Clear failed: {}", e))?;
+
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    Ok(WriteResult {
+        uid,
+        ok: true,
+        skipped: false,
+        error: None,
+    })
+}
+
 /// Read raw pages from NTAG216 tag (Debug Mode)
 #[tauri::command]
 pub fn read_ntag216_raw_desktop() -> CmdResult<Vec<String>> {
