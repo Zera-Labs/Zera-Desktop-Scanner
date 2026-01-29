@@ -42,6 +42,7 @@ pub fn run() {
             ntag216_desktop::write_ntag216_text_desktop,
             ntag216_desktop::write_ntag216_uri_desktop,
             ntag216_desktop::write_ntag216_json_desktop,
+            ntag216_desktop::clear_ntag216_desktop,
             ntag216_desktop::check_nfc_reader,
         ])
         .run(tauri::generate_context!())

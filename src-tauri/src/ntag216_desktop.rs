@@ -1241,6 +1241,49 @@ pub fn write_ntag216_json_desktop(
     })
 }
 
+/// Clear/blank NTAG216 tag by writing zeros to user pages
+#[tauri::command]
+pub fn clear_ntag216_desktop() -> CmdResult<WriteResult> {
+    let reader = DesktopNfcReader::auto_connect().map_err(|e| e.to_string())?;
+
+    // Verify tag is present
+    let uid_str = Some(reader.read_uid().map_err(|e| e.to_string())?);
+
+    dlog!("clear_ntag216_desktop: Clearing tag with UID: {:?}", uid_str);
+
+    // Calculate number of pages to clear (pages 4-221, inclusive)
+    let pages_to_clear = (NTAG216_LAST_USER_PAGE - NTAG216_FIRST_USER_PAGE + 1) as usize;
+    let clear_data = vec![0x00u8; pages_to_clear * 4];
+
+    dlog!("clear_ntag216_desktop: Writing {} bytes of zeros to pages {}-{}", 
+          clear_data.len(), NTAG216_FIRST_USER_PAGE, NTAG216_LAST_USER_PAGE);
+
+    // Write zeros to clear all user pages
+    reader
+        .write_pages(NTAG216_FIRST_USER_PAGE, &clear_data)
+        .map_err(|e| format!("Clear failed: {}", e))?;
+
+    // Wait for tag to process writes
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    // Verify tag is now blank
+    let (_, is_blank_verify, _) =
+        read_ndef_best_effort(&reader).map_err(|e| format!("Verification failed: {}", e))?;
+
+    if !is_blank_verify {
+        return Err("Clear verification failed: tag still contains data".to_string());
+    }
+
+    dlog!("clear_ntag216_desktop: Tag cleared successfully");
+
+    Ok(WriteResult {
+        uid: uid_str,
+        ok: true,
+        skipped: false,
+        error: None,
+    })
+}
+
 /// Read JSON from NTAG216 tag
 #[tauri::command]
 pub fn read_ntag216_json_desktop() -> CmdResult<String> {

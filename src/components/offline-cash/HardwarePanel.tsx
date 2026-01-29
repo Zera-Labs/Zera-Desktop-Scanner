@@ -1,5 +1,5 @@
 import React from "react";
-import { Loader2, ScanText } from "lucide-react";
+import { Loader2, ScanText, Trash2 } from "lucide-react";
 
 import ReaderStatus from "@/components/ReaderStatus";
 import TagContentPreview from "@/components/TagContentPreview";
@@ -21,6 +21,7 @@ type HardwarePanelProps = {
   status: string;
   onReadJson: () => void;
   onReadRaw: () => void;
+  onClearTag: () => void;
   canRead: boolean;
   stagedNote: PrivateCashVoucherTile | null;
   isDragOver: boolean;
@@ -46,6 +47,7 @@ export default function HardwarePanel({
   status,
   onReadJson,
   onReadRaw,
+  onClearTag,
   canRead,
   stagedNote,
   isDragOver,
@@ -95,6 +97,18 @@ export default function HardwarePanel({
                 Debug
               </Button>
             </div>
+          )}
+          {tagData && !tagData.is_blank && !isReading && (
+            <Button
+              variant="outline"
+              onClick={onClearTag}
+              disabled={!canRead}
+              className="w-full gap-1.5 text-[var(--text-secondary)] text-[12px] h-[36px] rounded-[12px] border-[var(--brand-light-green)]/25"
+              title="Clear tag back to blank state"
+            >
+              <Trash2 className="size-4" />
+              Clear Tag
+            </Button>
           )}
         </div>
 

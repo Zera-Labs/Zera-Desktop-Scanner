@@ -188,6 +188,19 @@ function App() {
     }
   }
 
+  async function handleClearTag() {
+    if (!canRead) return;
+    try {
+      pushStatus("Clearing tag...");
+      await invoke("clear_ntag216_desktop");
+      pushStatus("✓ Tag cleared successfully");
+      // Refresh read to show blank tag
+      await readJson.mutateAsync();
+    } catch (err) {
+      pushStatus(`Clear error: ${String(err)}`);
+    }
+  }
+
   async function handleReadRaw() {
     if (!canRead) return;
     try {
@@ -621,6 +634,7 @@ function App() {
           status={status}
           onReadJson={handleReadJson}
           onReadRaw={handleReadRaw}
+          onClearTag={handleClearTag}
           canRead={canRead}
           stagedNote={stagedNote}
           isDragOver={isDragOver}
