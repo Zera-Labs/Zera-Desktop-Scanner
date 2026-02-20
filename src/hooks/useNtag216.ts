@@ -60,23 +60,23 @@ export function useNtag216Json() {
     retry: false,
   });
 
-  type SaveVoucherResult = {
+  type SaveNoteResult = {
     path: string;
     already_existed: boolean;
   };
 
   const saveToDownloadsMutation = useMutation({
     mutationKey: ["ntag216", "save-to-downloads"],
-    mutationFn: async ({ voucherId, content }: { voucherId: string; content: object }) => {
-      return invoke<SaveVoucherResult>("save_voucher_to_downloads", {
-        voucherId,
+    mutationFn: async ({ noteId, content }: { noteId: string; content: object }) => {
+      return invoke<SaveNoteResult>("save_note_to_downloads", {
+        noteId,
         content: JSON.stringify(content, null, 2),
       });
     },
     onSuccess: (result) => {
       const fileName = result.path.split(/[/\\]/).pop();
       if (result.already_existed) {
-        pushStatus(`✓ Voucher already in Downloads: ${fileName}`);
+        pushStatus(`✓ Note already in Downloads: ${fileName}`);
       } else {
         pushStatus(`✓ Saved to Downloads: ${fileName}`);
       }
@@ -92,17 +92,20 @@ export function useNtag216Json() {
       if (DEMO_MODE) {
         await new Promise(resolve => setTimeout(resolve, 800));
         const cachedContent = queryClient.getQueryData<string | null>(["ntag216", "demo-tag-content"]);
-        const demoVoucher = {
+        const demoNote = {
           id: "demo-1",
-          voucherId: "0x74cccbb7db5be82b7c3d2d36e2cddb25649bd217",
-          amount: 211111111199.99,
-          recipient: "9Y6Aftit2gGPgY6H2DaDH1qnXE6qVhZ6kTpsuRWpuQXy",
+          amount: "21111111119999",
+          asset: "0",
           secret: "0xcb61b3870d94bef96de22653a3fa20b9e8b386b9",
-          salt: "0x1daf0ee216260d49503ea68acb2b45949db4f749",
-          txSignature: "DemoTxSignature123abc456def789",
+          blinding: "0x1daf0ee216260d49503ea68acb2b45949db4f749",
+          memo: ["0", "0", "0", "0"],
+          commitment: "0x74cccbb7db5be82b7c3d2d36e2cddb25649bd217",
+          nullifier: "0x9a61b3870d94bef96de22653a3fa20b9e8b386b9",
+          leafIndex: 0,
+          spent: false,
           createdAt: new Date().toISOString(),
         };
-        const content = options?.overrideContent || cachedContent || JSON.stringify(demoVoucher);
+        const content = options?.overrideContent || cachedContent || JSON.stringify(demoNote);
         return {
           uid: "04:AB:CD:EF:12:34:56",
           is_blank: false,
@@ -118,8 +121,8 @@ export function useNtag216Json() {
       if (res?.ndef?.kind === "json" && res.ndef.json && options?.autoSave !== false) {
         try {
           const parsed = JSON.parse(res.ndef.json);
-          const voucherId = parsed.voucherId || parsed.id || res.uid || "unknown";
-          await saveToDownloadsMutation.mutateAsync({ voucherId, content: parsed });
+          const noteId = parsed.commitment || parsed.nullifier || parsed.id || res.uid || "unknown";
+          await saveToDownloadsMutation.mutateAsync({ noteId, content: parsed });
           return;
         } catch {
         }

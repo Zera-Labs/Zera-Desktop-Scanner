@@ -8,29 +8,29 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useNtag216Json } from "@/hooks/useNtag216";
 import TopBar from "@/components/TopBar";
 import OverwriteConfirmModal from "@/components/OverwriteConfirmModal";
-import VoucherDetailModal from "@/components/VoucherDetailModal";
-import VoucherPanel from "@/components/offline-cash/VoucherPanel";
+import NoteDetailModal from "@/components/NoteDetailModal";
+import NotePanel from "@/components/offline-cash/NotePanel";
 import HardwarePanel from "@/components/offline-cash/HardwarePanel";
-import { type PrivateCashVoucherTile, buildVoucher } from "@/lib/voucher";
+import { type PrivateCashNoteTile, buildNote, toStoredNoteRecord } from "@/lib/note";
 import { prettyJson } from "@/lib/utils";
 import { IMPORT_DEBOUNCE_MS, NULLIFIER_INIT_DELAY_MS, PROTOCOL_INIT_DELAY_MS } from "@/lib/constants";
 
 function App() {
   const [jsonText, setJsonText] = useState('{"hello":"ntag216"}');
 
-  const [voucherTiles, setVoucherTiles] = useState<PrivateCashVoucherTile[]>([]);
-  const [voucherLoading, setVoucherLoading] = useState(false);
-  const [hasScannedVouchers, setHasScannedVouchers] = useState(false);
+  const [noteTiles, setNoteTiles] = useState<PrivateCashNoteTile[]>([]);
+  const [noteLoading, setNoteLoading] = useState(false);
+  const [hasScannedNotes, setHasScannedNotes] = useState(false);
   const assetFileInputRef = useRef<HTMLInputElement>(null);
   const assetDirectoryInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isImportDragOver, setIsImportDragOver] = useState(false);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
-  const [stagedNote, setStagedNote] = useState<PrivateCashVoucherTile | null>(null);
+  const [stagedNote, setStagedNote] = useState<PrivateCashNoteTile | null>(null);
   const [draggingNoteId, setDraggingNoteId] = useState<string | null>(null);
-  const [pendingNote, setPendingNote] = useState<PrivateCashVoucherTile | null>(null);
+  const [pendingNote, setPendingNote] = useState<PrivateCashNoteTile | null>(null);
   const [showOverwriteModal, setShowOverwriteModal] = useState(false);
-  const [detailVoucher, setDetailVoucher] = useState<PrivateCashVoucherTile | null>(null);
+  const [detailNote, setDetailNote] = useState<PrivateCashNoteTile | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
   const dropZoneRef = useRef<HTMLDivElement>(null);
 
@@ -143,10 +143,7 @@ function App() {
       }
       try {
         const parsed = JSON.parse(res.ndef.json);
-        const newVoucher: PrivateCashVoucherTile = {
-          ...parsed,
-          id: parsed.id || `note_${res.uid || Date.now()}`,
-        };
+        const newNote = buildNote(parsed, `note_${res.uid || Date.now()}`);
         
         const historyEvent = {
           operation: 'read' as const,
@@ -155,8 +152,8 @@ function App() {
           success: true,
         };
         
-        setVoucherTiles(prev => {
-          const existingIndex = prev.findIndex(v => v.id === newVoucher.id);
+        setNoteTiles(prev => {
+          const existingIndex = prev.findIndex(v => v.id === newNote.id);
           if (existingIndex >= 0) {
             const updated = [...prev];
             const existing = updated[existingIndex];
@@ -169,7 +166,7 @@ function App() {
             return updated;
           } else {
             return [...prev, {
-              ...newVoucher,
+              ...newNote,
               history: [historyEvent],
               lastReadAt: historyEvent.timestamp,
               readCount: 1,
@@ -177,7 +174,7 @@ function App() {
           }
         });
         
-        pushStatus(`✓ Read and saved voucher ${newVoucher.id}`);
+        pushStatus(`✓ Read and saved note ${newNote.id}`);
       } catch (err) {
         pushStatus(`Parse error: ${String(err)}`);
       }
@@ -216,21 +213,21 @@ function App() {
     }
   }
 
-  async function loadVoucherFiles(files: File[]): Promise<PrivateCashVoucherTile[]> {
-    const loaded: PrivateCashVoucherTile[] = [];
-    const seenVoucherIds = new Set<string>();
+  async function loadNoteFiles(files: File[]): Promise<PrivateCashNoteTile[]> {
+    const loaded: PrivateCashNoteTile[] = [];
+    const seenCommitments = new Set<string>();
 
     for (const file of files) {
       try {
         const content = await getFileContent(file);
         const parsed = JSON.parse(content);
-        const voucher = buildVoucher(parsed, file.name);
-        if (seenVoucherIds.has(voucher.voucherId)) {
+        const note = buildNote(parsed, file.name);
+        if (seenCommitments.has(note.commitment)) {
           pushStatus(`Skipping duplicate: ${file.name}`);
           continue;
         }
-        seenVoucherIds.add(voucher.voucherId);
-        loaded.push(voucher);
+        seenCommitments.add(note.commitment);
+        loaded.push(note);
       } catch (err) {
         pushStatus(`Skipping ${file.name}: ${String(err)}`);
       }
@@ -248,36 +245,36 @@ function App() {
     }
 
     if (!claimImportSlot(jsonPaths.length > 0)) return;
-    setVoucherLoading(true);
+    setNoteLoading(true);
     try {
-      const loaded: PrivateCashVoucherTile[] = [];
+      const loaded: PrivateCashNoteTile[] = [];
       for (const path of jsonPaths) {
         try {
           const content = await invoke<string>("read_file_text", { path });
-        const parsed = JSON.parse(content);
-        loaded.push(buildVoucher(parsed, path));
+          const parsed = JSON.parse(content);
+          loaded.push(buildNote(parsed, path));
         } catch (err) {
           pushStatus(`Skipping ${path}: ${String(err)}`);
         }
       }
-      setVoucherTiles((prev) => {
+      setNoteTiles((prev) => {
         const existingIds = new Set(prev.map((v) => v.id));
-        const existingVoucherIds = new Set(prev.map((v) => v.voucherId));
+        const existingCommitments = new Set(prev.map((v) => v.commitment));
         const incoming = loaded.filter((v) => 
-          !existingIds.has(v.id) && !existingVoucherIds.has(v.voucherId)
+          !existingIds.has(v.id) && !existingCommitments.has(v.commitment)
         );
         return [...prev, ...incoming];
       });
-      setHasScannedVouchers(true);
+      setHasScannedNotes(true);
       pushStatus(
         loaded.length
-          ? `✓ Imported ${loaded.length} voucher file(s) from drop.`
-          : "No valid voucher JSON files in dropped items."
+          ? `✓ Imported ${loaded.length} note file(s) from drop.`
+          : "No valid note JSON files in dropped items."
       );
     } catch (err) {
       pushStatus(`Drop import failed: ${String(err)}`);
     } finally {
-      setVoucherLoading(false);
+      setNoteLoading(false);
     }
   }
 
@@ -288,32 +285,32 @@ function App() {
     );
 
     if (files.length === 0) {
-      pushStatus("Drop JSON voucher files to import.");
+      pushStatus("Drop JSON note files to import.");
       return;
     }
 
     if (!claimImportSlot(files.length > 0)) return;
-    setVoucherLoading(true);
+    setNoteLoading(true);
     try {
-      const loaded = await loadVoucherFiles(files);
-      setVoucherTiles((prev) => {
+      const loaded = await loadNoteFiles(files);
+      setNoteTiles((prev) => {
         const existingIds = new Set(prev.map((v) => v.id));
-        const existingVoucherIds = new Set(prev.map((v) => v.voucherId));
+        const existingCommitments = new Set(prev.map((v) => v.commitment));
         const incoming = loaded.filter((v) => 
-          !existingIds.has(v.id) && !existingVoucherIds.has(v.voucherId)
+          !existingIds.has(v.id) && !existingCommitments.has(v.commitment)
         );
         return [...prev, ...incoming];
       });
-      setHasScannedVouchers(true);
+      setHasScannedNotes(true);
       pushStatus(
         loaded.length
-          ? `✓ Imported ${loaded.length} voucher file(s) from drop.`
-          : "Dropped files did not contain valid voucher JSON."
+          ? `✓ Imported ${loaded.length} note file(s) from drop.`
+          : "Dropped files did not contain valid note JSON."
       );
     } catch (err) {
       pushStatus(`Drop import failed: ${String(err)}`);
     } finally {
-      setVoucherLoading(false);
+      setNoteLoading(false);
     }
   }
 
@@ -345,39 +342,39 @@ function App() {
 
   async function handleAssetDirectorySelected(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []).filter((file) => file.name.toLowerCase().endsWith(".json"));
-    setVoucherLoading(true);
+    setNoteLoading(true);
     try {
       if (files.length === 0) {
-        // Don't clear existing vouchers if no new ones found, just notify
+        // Don't clear existing notes if no new ones found, just notify
         pushStatus(
-          "No voucher JSON files found or folder access was blocked. If Windows shows 'organization turned off access', try 'Choose files' or drag-and-drop individual JSONs instead."
+          "No note JSON files found or folder access was blocked. If Windows shows 'organization turned off access', try 'Choose files' or drag-and-drop individual JSONs instead."
         );
         return;
       }
 
-      const loaded = await loadVoucherFiles(files);
-      setVoucherTiles((prev) => {
+      const loaded = await loadNoteFiles(files);
+      setNoteTiles((prev) => {
         const existingIds = new Set(prev.map((v) => v.id));
         const incoming = loaded.filter((v) => !existingIds.has(v.id));
         return [...prev, ...incoming];
       });
-      setHasScannedVouchers(true);
+      setHasScannedNotes(true);
       pushStatus(
         loaded.length
-          ? `Loaded ${loaded.length} voucher file(s) from the selected folder.`
-          : "No voucher JSON files found in the selected folder."
+          ? `Loaded ${loaded.length} note file(s) from the selected folder.`
+          : "No note JSON files found in the selected folder."
       );
     } catch (err) {
       pushStatus(`Folder scan failed: ${String(err)}`);
     } finally {
-      setVoucherLoading(false);
+      setNoteLoading(false);
       event.target.value = "";
     }
   }
 
   async function handleAssetFilesSelected(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []).filter((file) => file.name.toLowerCase().endsWith(".json"));
-    setVoucherLoading(true);
+    setNoteLoading(true);
     try {
       if (files.length === 0) {
         pushStatus(
@@ -386,32 +383,32 @@ function App() {
         return;
       }
 
-      const loaded = await loadVoucherFiles(files);
-      setVoucherTiles((prev) => {
+      const loaded = await loadNoteFiles(files);
+      setNoteTiles((prev) => {
         const existingIds = new Set(prev.map((v) => v.id));
         const incoming = loaded.filter((v) => !existingIds.has(v.id));
         return [...prev, ...incoming];
       });
-      setHasScannedVouchers(true);
-      pushStatus(`Loaded ${loaded.length} file(s) into vouchers.`);
+      setHasScannedNotes(true);
+      pushStatus(`Loaded ${loaded.length} note file(s).`);
     } catch (err) {
       pushStatus(`Load failed: ${String(err)}`);
     } finally {
-      setVoucherLoading(false);
+      setNoteLoading(false);
       event.target.value = "";
     }
   }
 
   function handleClearAssets() {
-    setVoucherTiles([]);
-    setHasScannedVouchers(true);
-    pushStatus("Cleared voucher list.");
+    setNoteTiles([]);
+    setHasScannedNotes(true);
+    pushStatus("Cleared note list.");
   }
 
-  function handleViewVoucherDetails(noteId: string) {
-    const voucher = voucherTiles.find(v => v.id === noteId);
-    if (voucher) {
-      setDetailVoucher(voucher);
+  function handleViewNoteDetails(noteId: string) {
+    const note = noteTiles.find(v => v.id === noteId);
+    if (note) {
+      setDetailNote(note);
       setShowDetailModal(true);
     }
   }
@@ -437,7 +434,7 @@ function App() {
   }
 
 
-  async function handleWriteNote(note: PrivateCashVoucherTile) {
+  async function handleWriteNote(note: PrivateCashNoteTile) {
     if (!canWrite) return;
 
     if (readJson.data && !readJson.data.is_blank && readJson.data.ndef) {
@@ -449,19 +446,10 @@ function App() {
     await performWrite(note);
   }
 
-  async function performWrite(note: PrivateCashVoucherTile) {
+  async function performWrite(note: PrivateCashNoteTile) {
     
     try {
-      const noteJson = JSON.stringify({
-        id: note.id,
-        voucherId: note.voucherId,
-        amount: note.amount,
-        recipient: note.recipient,
-        secret: note.secret,
-        salt: note.salt,
-        txSignature: note.txSignature,
-        createdAt: note.createdAt,
-      });
+      const noteJson = JSON.stringify(toStoredNoteRecord(note));
       pushStatus(`Writing note ${note.id} to tag…`);
       const result = await writeJson.mutateAsync({ json: noteJson });
       const historyEvent = {
@@ -471,7 +459,7 @@ function App() {
         success: true,
       };
       
-      setVoucherTiles(prev => prev.map(v => v.id === note.id ? {
+      setNoteTiles(prev => prev.map(v => v.id === note.id ? {
         ...v,
         history: [...(v.history || []), historyEvent],
         lastWrittenAt: historyEvent.timestamp,
@@ -491,7 +479,7 @@ function App() {
         error: String(err),
       };
       
-      setVoucherTiles(prev => prev.map(v => v.id === note.id ? {
+      setNoteTiles(prev => prev.map(v => v.id === note.id ? {
         ...v,
         history: [...(v.history || []), historyEvent],
       } : v));
@@ -508,13 +496,10 @@ function App() {
 
     try {
       const parsed = JSON.parse(readJson.data.ndef.json);
-      const newVoucher: PrivateCashVoucherTile = {
-        ...parsed,
-        id: parsed.id || `note_${readJson.data.uid || Date.now()}`
-      };
-      const exists = voucherTiles.some(v => v.id === newVoucher.id);
+      const newNote = buildNote(parsed, `note_${readJson.data.uid || Date.now()}`);
+      const exists = noteTiles.some(v => v.id === newNote.id);
       if (!exists) {
-        setVoucherTiles(prev => [...prev, newVoucher]);
+        setNoteTiles(prev => [...prev, newNote]);
         pushStatus("✓ Note saved to computer storage!");
       } else {
         pushStatus("✓ Note already exists in collection.");
@@ -617,11 +602,11 @@ function App() {
       </div>
 
       <section className="px-6 py-6 grid gap-6 lg:grid-cols-[2fr_1fr]">
-        <VoucherPanel
-          vouchers={voucherTiles}
+        <NotePanel
+          notes={noteTiles}
           selectedNoteId={selectedNoteId}
-          voucherLoading={voucherLoading}
-          hasScannedVouchers={hasScannedVouchers}
+          noteLoading={noteLoading}
+          hasScannedNotes={hasScannedNotes}
           isImportDragOver={isImportDragOver}
           onImportDragOver={handleImportDragOver}
           onImportDragLeave={handleImportDragLeave}
@@ -630,7 +615,7 @@ function App() {
           onChooseFiles={() => assetFileInputRef.current?.click()}
           onClearAssets={handleClearAssets}
           onSelectNote={setSelectedNoteId}
-          onViewDetails={handleViewVoucherDetails}
+          onViewDetails={handleViewNoteDetails}
           onDragStart={(noteId) => {
             setDraggingNoteId(noteId);
           }}
@@ -688,7 +673,7 @@ function App() {
           }}
           onMouseUp={() => {
             if (draggingNoteId) {
-              const note = voucherTiles.find((v) => v.id === draggingNoteId);
+              const note = noteTiles.find((v) => v.id === draggingNoteId);
               if (note) {
                 setStagedNote(note);
                 setSelectedNoteId(note.id);
@@ -755,8 +740,8 @@ function App() {
         }}
       />
 
-      <VoucherDetailModal
-        voucher={detailVoucher}
+      <NoteDetailModal
+        note={detailNote}
         open={showDetailModal}
         onOpenChange={setShowDetailModal}
       />

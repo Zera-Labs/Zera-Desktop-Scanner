@@ -3,13 +3,13 @@ import { FolderSearch, Loader2 } from "lucide-react";
 
 import PrivateAssetsGrid from "@/components/PrivateAssetsGrid";
 import { Button } from "@/components/ui/button";
-import { type PrivateCashVoucherTile } from "@/lib/voucher";
+import { type PrivateCashNoteTile } from "@/lib/note";
 
-type VoucherPanelProps = {
-  vouchers: PrivateCashVoucherTile[];
+type NotePanelProps = {
+  notes: PrivateCashNoteTile[];
   selectedNoteId: string | null;
-  voucherLoading: boolean;
-  hasScannedVouchers: boolean;
+  noteLoading: boolean;
+  hasScannedNotes: boolean;
   isImportDragOver: boolean;
   onImportDragOver: (event: DragEvent<HTMLDivElement>) => void;
   onImportDragLeave: (event: DragEvent<HTMLDivElement>) => void;
@@ -27,11 +27,11 @@ type VoucherPanelProps = {
   onAssetFilesSelected: (event: ChangeEvent<HTMLInputElement>) => void;
 };
 
-export default function VoucherPanel({
-  vouchers,
+export default function NotePanel({
+  notes,
   selectedNoteId,
-  voucherLoading,
-  hasScannedVouchers,
+  noteLoading,
+  hasScannedNotes,
   isImportDragOver,
   onImportDragOver,
   onImportDragLeave,
@@ -47,7 +47,7 @@ export default function VoucherPanel({
   assetFileInputRef,
   onAssetDirectorySelected,
   onAssetFilesSelected,
-}: VoucherPanelProps) {
+}: NotePanelProps) {
   return (
     <div
       className={`space-y-4 rounded-xl transition-colors ${
@@ -60,8 +60,8 @@ export default function VoucherPanel({
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <h3 className="text-[16px] font-semibold">Private assets</h3>
         <div className="flex items-center gap-2 flex-wrap">
-          <Button variant="outline" disabled={voucherLoading} onClick={onLocateAssets} className="gap-1.5" expand>
-            {voucherLoading ? (
+          <Button variant="outline" disabled={noteLoading} onClick={onLocateAssets} className="gap-1.5" expand>
+            {noteLoading ? (
               <>
                 <Loader2 className="size-4 animate-spin" />
                 Loading
@@ -76,11 +76,11 @@ export default function VoucherPanel({
           <Button
             size="sm"
             variant="ghost"
-            disabled={voucherLoading}
+            disabled={noteLoading}
             onClick={onChooseFiles}
             className="gap-1.5"
           >
-            {voucherLoading ? (
+            {noteLoading ? (
               <>
                 <Loader2 className="size-4 animate-spin" />
                 Processing
@@ -92,7 +92,7 @@ export default function VoucherPanel({
           <Button
             size="sm"
             variant="ghost"
-            disabled={voucherLoading || vouchers.length === 0}
+            disabled={noteLoading || notes.length === 0}
             onClick={onClearAssets}
             className="gap-1.5 text-[var(--corange-300)] hover:text-[var(--corange-100)]"
           >
@@ -117,19 +117,18 @@ export default function VoucherPanel({
         </div>
       </div>
       <PrivateAssetsGrid
-        vouchers={vouchers}
+        notes={notes}
         selectedNoteId={selectedNoteId}
         onSelectNote={onSelectNote}
         onViewDetails={onViewDetails}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
       />
-      {hasScannedVouchers && vouchers.length === 0 ? (
+      {hasScannedNotes && notes.length === 0 ? (
         <p className="text-xs text-[var(--text-tertiary)]">
-          No voucher files were found in the selected folder. Add voucher JSON files and click Choose files.
+          No note files were found in the selected folder. Add note JSON files and click Choose files.
         </p>
       ) : null}
     </div>
   );
 }
-

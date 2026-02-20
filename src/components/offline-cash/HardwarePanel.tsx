@@ -7,7 +7,7 @@ import TagStatus from "@/components/TagStatus";
 import WriteZone from "@/components/WriteZone";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { type PrivateCashVoucherTile } from "@/lib/voucher";
+import { type PrivateCashNoteTile } from "@/lib/note";
 
 const SHOW_DEBUG_BUTTON = false;
 
@@ -25,7 +25,7 @@ type HardwarePanelProps = {
   onReadJson: () => void;
   onReadRaw: () => void;
   canRead: boolean;
-  stagedNote: PrivateCashVoucherTile | null;
+  stagedNote: PrivateCashNoteTile | null;
   isDragOver: boolean;
   dropZoneRef: React.RefObject<HTMLDivElement> | React.MutableRefObject<HTMLDivElement | null>;
   onWrite: () => void;
