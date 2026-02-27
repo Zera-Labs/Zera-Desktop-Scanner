@@ -52,7 +52,6 @@ function App() {
     status,
     statusHistory,
     isBusy,
-    isReading,
     isWriting,
     pushStatus,
   } = useNtag216Json();
@@ -652,7 +651,6 @@ function App() {
           onCheckReader={() => void checkReader()}
           tagData={readJson.data}
           busy={busy}
-          isReading={isReading}
           isWriting={isWriting}
           status={status}
           onSaveTagToComputer={() => void handleSaveTagToComputer()}

@@ -164,6 +164,31 @@ pnpm tauri build --target x86_64-unknown-linux-gnu  # Linux
 
 Built applications will be in `src-tauri/target/release/bundle/`
 
+### Tagging and releases
+- Tags are branch-specific and immutable; create a new tag on each branch you want artifacts from (feature branch, `Next`, and `main`). Merging does not move an existing tag.
+- Feature branch (example):  
+```
+git checkout <feature>
+git pull
+git tag -a vX.Y.Z-<feature> -m "vX.Y.Z-<feature>"
+git push origin vX.Y.Z-<feature>
+```
+- `Next` branch (example):  
+```
+git checkout Next
+git pull
+git tag -a vX.Y.Z-next.N -m "vX.Y.Z-next.N"
+git push origin vX.Y.Z-next.N
+```
+- `main` release (bump versions in `package.json` and `src-tauri/tauri.conf.json` first):  
+```
+git checkout main
+git pull
+git tag -a vX.Y.Z -m "vX.Y.Z"
+git push origin vX.Y.Z
+```
+- Each pushed `v*` tag triggers the tag-build workflow and produces artifacts for that exact commit/branch snapshot.
+
 #### Development Tips
 
 - **Enable Rust Debug Logs**: Set `DESK_TAURI_DEBUG=1` environment variable
