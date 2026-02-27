@@ -91,7 +91,16 @@ export function useNtag216Json() {
     mutationFn: async (options) => {
       if (DEMO_MODE) {
         await new Promise(resolve => setTimeout(resolve, 800));
-        const cachedContent = queryClient.getQueryData<string | null>(["ntag216", "demo-tag-content"]);
+
+        const cachedContent = queryClient.getQueryData<string | null | undefined>(["ntag216", "demo-tag-content"]);
+        if (cachedContent === null) {
+          return {
+            uid: "04:AB:CD:EF:12:34:56",
+            is_blank: true,
+            ndef: null
+          };
+        }
+
         const demoNote = {
           id: "demo-1",
           amount: "21111111119999",
@@ -189,10 +198,39 @@ export function useNtag216Json() {
     },
   });
 
+  const eraseMutation = useMutation<WriteResult, unknown, void>({
+    mutationKey: ["ntag216", "erase"],
+    mutationFn: async () => {
+      if (DEMO_MODE) {
+        await new Promise(resolve => setTimeout(resolve, 800));
+        queryClient.setQueryData(["ntag216", "demo-tag-content"], null);
+        return {
+          uid: "04:AB:CD:EF:12:34:56",
+          ok: true,
+          skipped: false,
+          error: null,
+        };
+      }
+      return invoke<WriteResult>("erase_ntag216_desktop");
+    },
+    onMutate: () => {
+      pushStatus("Clearing tag… place tag on NFC reader");
+    },
+    onSuccess: () => {
+      pushStatus("✓ Tag cleared successfully.");
+      setLastRead(null);
+      readMutation.mutate({ autoSave: false });
+    },
+    onError: (err: unknown) => {
+      pushStatus(`Error: ${String(err)}`);
+    },
+  });
+
   const statusIsError = useMemo(() => status.toLowerCase().includes("error"), [status]);
   const isReading = readMutation.isPending;
   const isWriting = writeMutation.isPending;
-  const isBusy = isReading || isWriting;
+  const isErasing = eraseMutation.isPending;
+  const isBusy = isReading || isWriting || isErasing;
 
   const checkReader = useCallback(async () => {
     const res = await readerQuery.refetch();
@@ -207,12 +245,14 @@ export function useNtag216Json() {
     readJson: readMutation,
     readRaw: readRawMutation,
     writeJson: writeMutation,
+    eraseTag: eraseMutation,
     lastRead,
     status,
     statusHistory,
     statusIsError,
     isReading,
     isWriting,
+    isErasing,
     isBusy,
     pushStatus,
     saveToDownloads: saveToDownloadsMutation,

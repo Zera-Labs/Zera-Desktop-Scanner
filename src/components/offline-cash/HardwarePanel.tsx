@@ -1,5 +1,5 @@
 import React from "react";
-import { Loader2, ScanText } from "lucide-react";
+import { Eraser, Loader2, ScanText } from "lucide-react";
 
 import ReaderStatus from "@/components/ReaderStatus";
 import TagContentPreview from "@/components/TagContentPreview";
@@ -18,12 +18,13 @@ type HardwarePanelProps = {
   onCheckReader: () => void;
   tagData: any;
   busy: boolean;
-  isReading: boolean;
   isWriting: boolean;
+  isErasing: boolean;
   status: string;
   onSaveTagToComputer: () => void;
   onReadJson: () => void;
   onReadRaw: () => void;
+  onEraseTag: () => void;
   canRead: boolean;
   stagedNote: PrivateCashNoteTile | null;
   isDragOver: boolean;
@@ -44,12 +45,12 @@ export default function HardwarePanel({
   onCheckReader,
   tagData,
   busy,
-  isReading,
   isWriting,
+  isErasing,
   status,
-  onSaveTagToComputer,
   onReadJson,
   onReadRaw,
+  onEraseTag,
   canRead,
   stagedNote,
   isDragOver,
@@ -78,7 +79,7 @@ export default function HardwarePanel({
         {tagData && <TagStatus tagData={tagData} />}
 
         <div className="grid gap-2">
-          {!isReading && (
+          {!busy && (
             <div className="flex gap-2">
               <Button
                 variant="greenTint"
@@ -105,7 +106,28 @@ export default function HardwarePanel({
         </div>
 
         {tagData?.ndef?.kind === "json" && tagData.ndef.json && (
-          <TagContentPreview json={tagData.ndef.json} busy={busy} onSave={onSaveTagToComputer} />
+          <TagContentPreview json={tagData.ndef.json} />
+        )}
+
+        {tagData && !tagData.is_blank && !isErasing && (
+          <div className="flex justify-center">
+            <button
+              onClick={onEraseTag}
+              disabled={busy}
+              className="h-[28px] px-3 rounded-[8px] border border-[var(--brand-light-green)]/25 bg-transparent text-[var(--text-tertiary)] text-[11px] flex items-center gap-1.5 hover:bg-red-500/10 hover:border-red-500/40 hover:text-[var(--text-primary)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              title="Clear tag contents (set to blank)"
+            >
+              <Eraser className="size-3.5" />
+              Clear tag
+            </button>
+          </div>
+        )}
+
+        {isErasing && (
+          <div className="flex items-center justify-center gap-2 h-[32px] text-[11px] text-[var(--text-tertiary)]">
+            <Loader2 className="size-3.5 animate-spin" />
+            <span>Clearing tag...</span>
+          </div>
         )}
 
         <div className="border-t border-[var(--brand-light-green)]/20 my-4"></div>
@@ -122,7 +144,6 @@ export default function HardwarePanel({
           isDragOver={isDragOver}
           isWriting={isWriting}
           busy={busy}
-          isReading={isReading}
           dropZoneRef={dropZoneRef}
           onWrite={onWrite}
           onClear={onClear}

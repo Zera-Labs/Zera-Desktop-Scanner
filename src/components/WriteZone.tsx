@@ -14,7 +14,6 @@ interface WriteZoneProps {
   isDragOver: boolean;
   isWriting: boolean;
   busy: boolean;
-  isReading: boolean;
   dropZoneRef: React.RefObject<HTMLDivElement | null>;
   onWrite: () => void;
   onClear: () => void;
@@ -29,7 +28,6 @@ export default function WriteZone({
   isDragOver,
   isWriting,
   busy,
-  isReading,
   dropZoneRef,
   onWrite,
   onClear,
