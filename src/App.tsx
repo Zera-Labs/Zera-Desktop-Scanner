@@ -49,10 +49,12 @@ function App() {
     readJson,
     readRaw,
     writeJson,
+    eraseTag,
     status,
     statusHistory,
     isBusy,
     isWriting,
+    isErasing,
     pushStatus,
   } = useNtag216Json();
 
@@ -204,6 +206,15 @@ function App() {
       // For now, let's just dump to console as requested by "debug mode"
     } catch (err) {
       pushStatus(`Raw read failed: ${String(err)}`);
+    }
+  }
+
+  async function handleEraseTag() {
+    if (busy) return;
+    try {
+      await eraseTag.mutateAsync();
+    } catch (err) {
+      // Error already handled by mutation's onError
     }
   }
 
@@ -652,10 +663,12 @@ function App() {
           tagData={readJson.data}
           busy={busy}
           isWriting={isWriting}
+          isErasing={isErasing}
           status={status}
           onSaveTagToComputer={() => void handleSaveTagToComputer()}
           onReadJson={handleReadJson}
           onReadRaw={handleReadRaw}
+          onEraseTag={handleEraseTag}
           canRead={canRead}
           stagedNote={stagedNote}
           isDragOver={isDragOver}
