@@ -6,20 +6,20 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { type PrivateCashVoucherTile } from "@/lib/voucher";
+import { type PrivateCashNoteTile } from "@/lib/note";
 
-interface VoucherDetailModalProps {
-  voucher: PrivateCashVoucherTile | null;
+interface NoteDetailModalProps {
+  note: PrivateCashNoteTile | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-export default function VoucherDetailModal({
-  voucher,
+export default function NoteDetailModal({
+  note,
   open,
   onOpenChange,
-}: VoucherDetailModalProps) {
-  if (!voucher) return null;
+}: NoteDetailModalProps) {
+  if (!note) return null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -31,7 +31,7 @@ export default function VoucherDetailModal({
                 <Wallet className="size-5 text-[var(--brand-green)]" />
               </div>
               <DialogTitle className="text-2xl font-pp-machina text-[var(--text-primary)]">
-                Voucher Details
+                Note Details
               </DialogTitle>
             </div>
             <button
@@ -48,17 +48,17 @@ export default function VoucherDetailModal({
           <Card variant="darkSolidGrey" className="py-6 px-4 gap-3">
             <CardHeader className="px-0 pb-2 text-center">
               <CardTitle className="text-[16px] font-normal text-[var(--text-tertiary)]">
-                Voucher Amount
+                Note Amount
               </CardTitle>
             </CardHeader>
             <CardContent className="px-0 space-y-3 text-center">
               <div className="font-pp-machina text-[32px] leading-[32px] tracking-[-0.006em] text-[var(--brand-green-50)]">
-                ${voucher.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).split('.')[0]}.<span className="opacity-60 text-[22px]">{voucher.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).split('.')[1]}</span>
+                ${note.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).split('.')[0]}.<span className="opacity-60 text-[22px]">{note.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).split('.')[1]}</span>
               </div>
             </CardContent>
           </Card>
 
-          {/* Voucher Info */}
+          {/* Note Info */}
           <div className="space-y-3">
             <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--text-tertiary)]">
               Information
@@ -67,57 +67,57 @@ export default function VoucherDetailModal({
               <div className="flex justify-between items-center p-4">
                 <span className="text-sm text-[var(--text-tertiary)]">ID</span>
                 <span className="font-mono text-sm text-[var(--text-primary)]">
-                  {voucher.id}
+                  {note.id}
                 </span>
               </div>
               <div className="flex justify-between items-center p-4">
                 <span className="text-sm text-[var(--text-tertiary)]">Created</span>
                 <span className="text-sm text-[var(--text-primary)]">
-                  {new Date(voucher.createdAt).toLocaleString()}
+                  {new Date(note.createdAt).toLocaleString()}
                 </span>
               </div>
               <div className="flex justify-between items-start p-4 gap-4">
                 <span className="text-sm text-[var(--text-tertiary)] flex-shrink-0">Recipient</span>
                 <span className="font-mono text-xs text-[var(--text-primary)] text-right break-all">
-                  {voucher.recipient}
+                  {note.recipient}
                 </span>
               </div>
             </div>
           </div>
 
           {/* Statistics */}
-          {(voucher.readCount || voucher.writeCount) && (
+          {(note.readCount || note.writeCount) && (
             <div className="space-y-3">
               <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--text-tertiary)]">
                 Statistics
               </h3>
               <div className="grid grid-cols-2 gap-3">
-                {voucher.readCount !== undefined && (
+                {note.readCount !== undefined && (
                   <div className="rounded-xl border border-[var(--brand-light-green)]/20 bg-[var(--brand-light-dark-green)]/50 p-4 text-center">
                     <div className="text-3xl font-bold text-[var(--brand-green-50)] mb-1">
-                      {voucher.readCount}
+                      {note.readCount}
                     </div>
                     <div className="text-xs uppercase tracking-wider text-[var(--text-tertiary)]">
                       Total Reads
                     </div>
-                    {voucher.lastReadAt && (
+                    {note.lastReadAt && (
                       <div className="text-[10px] text-[var(--text-tertiary)] mt-2">
-                        Last: {new Date(voucher.lastReadAt).toLocaleDateString()}
+                        Last: {new Date(note.lastReadAt).toLocaleDateString()}
                       </div>
                     )}
                   </div>
                 )}
-                {voucher.writeCount !== undefined && (
+                {note.writeCount !== undefined && (
                   <div className="rounded-xl border border-[var(--brand-light-green)]/20 bg-[var(--brand-light-dark-green)]/50 p-4 text-center">
                     <div className="text-3xl font-bold text-[var(--brand-green-50)] mb-1">
-                      {voucher.writeCount}
+                      {note.writeCount}
                     </div>
                     <div className="text-xs uppercase tracking-wider text-[var(--text-tertiary)]">
                       Total Writes
                     </div>
-                    {voucher.lastWrittenAt && (
+                    {note.lastWrittenAt && (
                       <div className="text-[10px] text-[var(--text-tertiary)] mt-2">
-                        Last: {new Date(voucher.lastWrittenAt).toLocaleDateString()}
+                        Last: {new Date(note.lastWrittenAt).toLocaleDateString()}
                       </div>
                     )}
                   </div>
@@ -127,18 +127,18 @@ export default function VoucherDetailModal({
           )}
 
           {/* History Timeline */}
-          {voucher.history && voucher.history.length > 0 ? (
+          {note.history && note.history.length > 0 ? (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--text-tertiary)]">
                   Activity History
                 </h3>
                 <span className="text-xs px-2 py-1 rounded-md bg-[var(--brand-light-dark-green)] text-[var(--brand-green-50)]">
-                  {voucher.history.length} {voucher.history.length === 1 ? 'event' : 'events'}
+                  {note.history.length} {note.history.length === 1 ? 'event' : 'events'}
                 </span>
               </div>
               <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-white/20 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:hover:bg-white/30">
-                {[...voucher.history].reverse().map((event, idx) => (
+                {[...note.history].reverse().map((event, idx) => (
                   <div
                     key={idx}
                     className="group rounded-xl border border-[var(--brand-light-green)]/15 bg-[var(--brand-light-dark-green)]/30 hover:bg-[var(--brand-light-dark-green)]/50 hover:border-[var(--brand-light-green)]/25 transition-all p-4"
@@ -201,4 +201,3 @@ export default function VoucherDetailModal({
     </Dialog>
   );
 }
-

@@ -25,7 +25,7 @@ function formatUsdCompact(value: number): { whole: string; fraction: string } {
   return { whole, fraction }
 }
 
-function formatVoucherAge(minutes: number): string {
+function formatNoteAge(minutes: number): string {
   if (!Number.isFinite(minutes) || minutes <= 0) return '<1m'
 
   if (minutes < 60) {
@@ -112,7 +112,7 @@ export default function PrivateAssetCard({
       <div className="absolute left-2 top-2">
         <Badge variant="tx" status="pending" className="px-2 py-1">
           <Clock3 className="mr-1" />
-          {formatVoucherAge(ageMinutes)}
+          {formatNoteAge(ageMinutes)}
         </Badge>
       </div>
 

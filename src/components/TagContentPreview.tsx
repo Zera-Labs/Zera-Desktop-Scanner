@@ -14,7 +14,7 @@ export default function TagContentPreview({ json }: TagContentPreviewProps) {
           <PrivateAssetCard
             isFull
             valueUsd={parsed.amount || 0}
-            txSignature={parsed.txSignature || parsed.recipient || "Unknown"}
+            txSignature={parsed.txSignature || parsed.nullifier || parsed.commitment || parsed.recipient || "Unknown"}
             createdAt={parsed.createdAt || new Date().toISOString()}
             className="scale-90 origin-center"
           />

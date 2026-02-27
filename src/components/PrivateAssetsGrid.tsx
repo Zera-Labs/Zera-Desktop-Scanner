@@ -3,10 +3,10 @@ import * as React from 'react'
 import { Card } from '@/components/ui/card'
 import PrivateAssetCard from '@/components/PrivateAssetCard'
 import { DRAG_ACTIVATE_THRESHOLD_PX } from '@/lib/constants'
-import { type PrivateCashVoucherTile } from '@/lib/voucher'
+import { type PrivateCashNoteTile } from '@/lib/note'
 
 type PrivateAssetsGridProps = {
-  vouchers?: PrivateCashVoucherTile[]
+  notes?: PrivateCashNoteTile[]
   selectedNoteId?: string | null
   onSelectNote?: (id: string) => void
   onViewDetails?: (id: string) => void
@@ -14,16 +14,16 @@ type PrivateAssetsGridProps = {
   onDragEnd?: () => void
 }
 
-export default function PrivateAssetsGrid({ vouchers, selectedNoteId, onSelectNote, onViewDetails, onDragStart, onDragEnd }: PrivateAssetsGridProps) {
-  const initialTiles = React.useMemo<PrivateCashVoucherTile[]>(() => vouchers ?? [], [vouchers])
+export default function PrivateAssetsGrid({ notes, selectedNoteId, onSelectNote, onViewDetails, onDragStart, onDragEnd }: PrivateAssetsGridProps) {
+  const initialTiles = React.useMemo<PrivateCashNoteTile[]>(() => notes ?? [], [notes])
 
   const [tiles, setTiles] = React.useState(initialTiles)
 
   React.useEffect(() => {
-    if (vouchers !== undefined) {
-      setTiles(vouchers)
+    if (notes !== undefined) {
+      setTiles(notes)
     }
-  }, [vouchers])
+  }, [notes])
   const dragIndex = React.useRef<number | null>(null)
   const [hoverIndex, setHoverIndex] = React.useState<number | null>(null)
   const [isDragging, setIsDragging] = React.useState(false)
@@ -199,7 +199,7 @@ export default function PrivateAssetsGrid({ vouchers, selectedNoteId, onSelectNo
                 No private assets found
               </p>
               <p className="text-xs text-[var(--text-tertiary)] max-w-md">
-                Scan for voucher files in your Downloads folder to see them displayed here.
+                Scan for note files in your Downloads folder to see them displayed here.
               </p>
             </div>
           </div>
